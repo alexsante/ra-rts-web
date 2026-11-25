@@ -43,12 +43,13 @@ async function runMultiplayerTest(): Promise<void> {
     new Promise<void>((r) => guestWs.once('open', r)),
   ]);
 
-  // 1. Host creates 1v1 Lobby with custom MatchConfig (Arctic, Soviets, $10,000)
+  // 1. Host creates 1v1 Lobby with custom MatchConfig (Arctic, 104×104 custom size, Soviets, $10,000)
   const createdP = waitForMessage(hostWs, 'room_created');
   send(hostWs, {
     type: 'create_room',
     config: {
       mapPreset: 'arctic',
+      mapSize: 104,
       hostFaction: 'soviets',
       startingCredits: 10000,
       fogOfWar: true,
@@ -61,6 +62,7 @@ async function runMultiplayerTest(): Promise<void> {
   if (
     !created.roomId ||
     created.faction !== 'soviets' ||
+    created.config.mapSize !== 104 ||
     created.config.startingCredits !== 10000 ||
     created.inMatch
   ) {
@@ -74,6 +76,7 @@ async function runMultiplayerTest(): Promise<void> {
   const [joined, peerJoined] = await Promise.all([joinedP, peerJoinedP]);
   if (
     joined.faction !== 'allies' ||
+    joined.config.mapSize !== 104 ||
     joined.config.startingCredits !== 10000 ||
     joined.reconnected ||
     peerJoined.peerFaction !== 'allies'
@@ -81,16 +84,17 @@ async function runMultiplayerTest(): Promise<void> {
     throw new Error('Unexpected faction or config on lobby join');
   }
 
-  // 3. Host updates lobby settings (swaps Host -> Allies, Credits -> $5000); both receive lobby_state
+  // 3. Host updates lobby settings (swaps Host -> Allies, Map Size -> 96×96, Credits -> $5000); both receive lobby_state
   const hostLobbyP = waitForMessage(hostWs, 'lobby_state');
   const guestLobbyP = waitForMessage(guestWs, 'lobby_state');
   send(hostWs, {
     type: 'update_lobby',
-    config: { hostFaction: 'allies', startingCredits: 5000, mapPreset: 'arctic' },
+    config: { hostFaction: 'allies', mapSize: 96, startingCredits: 5000, mapPreset: 'arctic' },
   });
   const [hostLobby, guestLobby] = await Promise.all([hostLobbyP, guestLobbyP]);
   if (
     hostLobby.lobby.config.hostFaction !== 'allies' ||
+    guestLobby.lobby.config.mapSize !== 96 ||
     guestLobby.lobby.config.startingCredits !== 5000
   ) {
     throw new Error('Lobby config update failed to sync');

@@ -1,4 +1,4 @@
-import { BUILDING_SPECS, MAP_SIZE, tileToWorld } from './config';
+import { BUILDING_SPECS, tileToWorld } from './config';
 import { AIDifficulty, BuildingType, Faction, UnitType, Vec2 } from './types';
 import { GameWorld } from './world';
 
@@ -297,11 +297,12 @@ export class SkirmishAI {
     let best: { gx: number; gz: number } | null = null;
     let bestScore = Infinity;
 
+    const mapSize = world.map.size;
     for (let dz = -11; dz <= 11; dz++) {
       for (let dx = -11; dx <= 11; dx++) {
         const gx = cx + dx;
         const gz = cz + dz;
-        if (gx < 2 || gz < 2 || gx >= MAP_SIZE - 4 || gz >= MAP_SIZE - 4) continue;
+        if (gx < 2 || gz < 2 || gx >= mapSize - 4 || gz >= mapSize - 4) continue;
         if (!world.canPlaceBuilding(this.faction, type, gx, gz)) continue;
 
         const dist = Math.hypot(dx, dz);

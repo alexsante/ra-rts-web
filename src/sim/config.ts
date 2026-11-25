@@ -1,8 +1,23 @@
 import { ArmorType, BuildingSpec, BuildingType, DamageType, Faction, SuperweaponType, UnitSpec, UnitType } from './types';
 
 export const MAP_SIZE = 72;
+export const MIN_MAP_SIZE = 48;
+export const MAX_MAP_SIZE = 160;
 export const TILE_SIZE = 2.0;
 export const WORLD_SIZE = MAP_SIZE * TILE_SIZE;
+
+export const MAP_SIZE_PRESETS: ReadonlyArray<{ label: string; size: number }> = [
+  { label: 'Small (56×56)', size: 56 },
+  { label: 'Medium (72×72)', size: 72 },
+  { label: 'Large (96×96)', size: 96 },
+  { label: 'Huge (128×128)', size: 128 },
+];
+
+export function clampMapSize(raw?: number): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return MAP_SIZE;
+  const clamped = Math.max(MIN_MAP_SIZE, Math.min(MAX_MAP_SIZE, Math.round(raw)));
+  return clamped % 2 === 0 ? clamped : clamped + 1;
+}
 export const SIM_HZ = 20;
 export const SIM_DT = 1 / SIM_HZ;
 export const BUILD_RADIUS_TILES = 12;
@@ -577,9 +592,9 @@ export function tileToWorld(gx: number, gz: number): { x: number; z: number } {
   };
 }
 
-export function worldToTile(x: number, z: number): { gx: number; gz: number } {
+export function worldToTile(x: number, z: number, mapSize = MAP_SIZE): { gx: number; gz: number } {
   return {
-    gx: Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(x / TILE_SIZE))),
-    gz: Math.max(0, Math.min(MAP_SIZE - 1, Math.floor(z / TILE_SIZE))),
+    gx: Math.max(0, Math.min(mapSize - 1, Math.floor(x / TILE_SIZE))),
+    gz: Math.max(0, Math.min(mapSize - 1, Math.floor(z / TILE_SIZE))),
   };
 }

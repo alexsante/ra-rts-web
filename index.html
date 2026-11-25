@@ -132,6 +132,29 @@
               </label>
 
               <label class="cfg-field">
+                <span>MAP SIZE (TILES)</span>
+                <div class="map-size-row">
+                  <select id="cfg-map-size" class="hud-select">
+                    <option value="56">Small (56×56 — Fast)</option>
+                    <option value="72" selected>Medium (72×72 — Classic)</option>
+                    <option value="96">Large (96×96 — 4 Derricks)</option>
+                    <option value="128">Huge (128×128 — Epic)</option>
+                    <option value="custom">Custom (48–160)...</option>
+                  </select>
+                  <input
+                    id="cfg-map-size-custom"
+                    type="number"
+                    min="48"
+                    max="160"
+                    step="2"
+                    value="88"
+                    class="hud-select custom-size-input hidden"
+                    title="Custom square map width/height in tiles (48–160)"
+                  />
+                </div>
+              </label>
+
+              <label class="cfg-field">
                 <span id="cfg-faction-title">YOUR FACTION</span>
                 <select id="cfg-faction" class="hud-select">
                   <option value="allies">Allies (Prism · Chrono · Air Strike)</option>

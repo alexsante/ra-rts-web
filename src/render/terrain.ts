@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MAP_SIZE, TILE_SIZE, WORLD_SIZE } from '../sim/config';
+import { TILE_SIZE } from '../sim/config';
 import { sampleTerrainHeight } from '../sim/mapGen';
 import { MapData } from '../sim/types';
 import { createContactShadow, getMaterialLibrary } from './materials';
@@ -25,8 +25,8 @@ interface OreInstanceSlot {
   isGem: boolean;
 }
 
-function createSkyDome(topHex: number, horizonHex: number): THREE.Mesh {
-  const geo = new THREE.SphereGeometry(240, 24, 16);
+function createSkyDome(topHex: number, horizonHex: number, worldSize: number): THREE.Mesh {
+  const geo = new THREE.SphereGeometry(Math.max(240, worldSize * 1.65), 24, 16);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
@@ -55,24 +55,26 @@ function createSkyDome(topHex: number, horizonHex: number): THREE.Mesh {
     `,
   });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(WORLD_SIZE * 0.5, 0, WORLD_SIZE * 0.5);
+  mesh.position.set(worldSize * 0.5, 0, worldSize * 0.5);
   return mesh;
 }
 
 export function createTerrainVisuals(map: MapData): TerrainVisuals {
   const group = new THREE.Group();
+  const mapSize = map.size;
+  const worldSize = map.worldSize;
 
   // 0. Procedural gradient sky dome
-  const skyDome = createSkyDome(map.theme.skyTopHex, map.theme.skyHorizonHex);
+  const skyDome = createSkyDome(map.theme.skyTopHex, map.theme.skyHorizonHex, worldSize);
   group.add(skyDome);
 
   // 1. Displaced heightmap terrain mesh
-  const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, MAP_SIZE, MAP_SIZE);
+  const geo = new THREE.PlaneGeometry(worldSize, worldSize, mapSize, mapSize);
   geo.rotateX(-Math.PI / 2);
-  geo.translate(WORLD_SIZE * 0.5, 0, WORLD_SIZE * 0.5);
+  geo.translate(worldSize * 0.5, 0, worldSize * 0.5);
 
   const pos = geo.attributes.position as THREE.BufferAttribute;
-  const cols = MAP_SIZE + 1;
+  const cols = mapSize + 1;
   for (let vz = 0; vz < cols; vz++) {
     for (let vx = 0; vx < cols; vx++) {
       const idx = vz * cols + vx;
@@ -99,7 +101,7 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
   group.add(groundMesh);
 
   // 2. Outer skirt blending smoothly into fog
-  const skirtGeo = new THREE.PlaneGeometry(WORLD_SIZE * 3.8, WORLD_SIZE * 3.8);
+  const skirtGeo = new THREE.PlaneGeometry(worldSize * 3.8, worldSize * 3.8);
   skirtGeo.rotateX(-Math.PI / 2);
   const skirtMat = new THREE.MeshStandardMaterial({
     color: map.theme.skirtHex,
@@ -107,7 +109,7 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
     metalness: 0.0,
   });
   const skirt = new THREE.Mesh(skirtGeo, skirtMat);
-  skirt.position.set(WORLD_SIZE * 0.5, -0.25, WORLD_SIZE * 0.5);
+  skirt.position.set(worldSize * 0.5, -0.25, worldSize * 0.5);
   skirt.receiveShadow = true;
   group.add(skirt);
 
@@ -115,9 +117,9 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
   const oreSlots: OreInstanceSlot[] = [];
   const gemSlots: OreInstanceSlot[] = [];
 
-  for (let gz = 0; gz < MAP_SIZE; gz++) {
-    for (let gx = 0; gx < MAP_SIZE; gx++) {
-      const idx = gz * MAP_SIZE + gx;
+  for (let gz = 0; gz < mapSize; gz++) {
+    for (let gx = 0; gx < mapSize; gx++) {
+      const idx = gz * mapSize + gx;
       const amt = map.ore[idx];
       if (amt <= 0) continue;
       const wx = (gx + 0.5) * TILE_SIZE;
@@ -208,9 +210,10 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
   const dummy = new THREE.Object3D();
 
   const updateOreVisuals = (currentMap: MapData) => {
+    const ms = currentMap.size;
     for (let i = 0; i < oreSlots.length; i++) {
       const s = oreSlots[i];
-      const rem = currentMap.ore[s.gz * MAP_SIZE + s.gx];
+      const rem = currentMap.ore[s.gz * ms + s.gx];
       const ratio = Math.max(0, Math.min(1, rem / s.maxOre));
       const sc = ratio <= 0.02 ? 0.0001 : s.scaleBase * (0.4 + ratio * 0.72);
       dummy.position.set(s.baseX, s.baseY, s.baseZ);
@@ -223,7 +226,7 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
 
     for (let i = 0; i < gemSlots.length; i++) {
       const s = gemSlots[i];
-      const rem = currentMap.ore[s.gz * MAP_SIZE + s.gx];
+      const rem = currentMap.ore[s.gz * ms + s.gx];
       const ratio = Math.max(0, Math.min(1, rem / s.maxOre));
       const sc = ratio <= 0.02 ? 0.0001 : s.scaleBase * (0.42 + ratio * 0.75);
       dummy.position.set(s.baseX, s.baseY, s.baseZ);
@@ -371,10 +374,10 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
 
   // 5. Fog of War overlay
   const fogCanvas = document.createElement('canvas');
-  fogCanvas.width = MAP_SIZE;
-  fogCanvas.height = MAP_SIZE;
+  fogCanvas.width = mapSize;
+  fogCanvas.height = mapSize;
   const fogCtx = fogCanvas.getContext('2d')!;
-  const fogImg = fogCtx.createImageData(MAP_SIZE, MAP_SIZE);
+  const fogImg = fogCtx.createImageData(mapSize, mapSize);
 
   const fogTex = new THREE.CanvasTexture(fogCanvas);
   fogTex.minFilter = THREE.LinearFilter;
@@ -399,7 +402,8 @@ export function createTerrainVisuals(map: MapData): TerrainVisuals {
     if (!enabled) return;
 
     const d = fogImg.data;
-    for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
+    const total = mapSize * mapSize;
+    for (let i = 0; i < total; i++) {
       const state = fog[i];
       const o = i * 4;
       d[o] = 10;

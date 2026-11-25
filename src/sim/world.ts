@@ -6,11 +6,10 @@ import {
   CHRONOSHIFT_COOLDOWN,
   DAMAGE_MULTIPLIERS,
   IRON_CURTAIN_COOLDOWN,
-  MAP_SIZE,
   NUKE_COOLDOWN,
   TILE_SIZE,
   UNIT_SPECS,
-  WORLD_SIZE,
+  clampMapSize,
   tileToWorld,
   worldToTile,
 } from './config';
@@ -75,8 +74,8 @@ export class GameWorld {
   readonly falloutZones = new Map<number, FalloutZone>();
   private readonly pendingStrikes = new Map<number, PendingStrike>();
 
-  readonly blocked = new Uint8Array(MAP_SIZE * MAP_SIZE);
-  readonly fog = new Uint8Array(MAP_SIZE * MAP_SIZE);
+  readonly blocked: Uint8Array;
+  readonly fog: Uint8Array;
   fogEnabled: boolean;
   localFaction: Faction = 'allies';
 
@@ -105,13 +104,16 @@ export class GameWorld {
       this.config = {
         ...DEFAULT_MATCH_CONFIG,
         ...(configOrPvP ?? {}),
+        mapSize: clampMapSize(configOrPvP?.mapSize ?? DEFAULT_MATCH_CONFIG.mapSize),
       };
     }
 
     this.rng = createSeededRng(this.config.seed);
     this.fogEnabled = this.config.fogOfWar;
     this.localFaction = this.config.hostFaction;
-    this.map = generateMap(this.config.mapPreset);
+    this.map = generateMap(this.config.mapPreset, this.config.mapSize);
+    this.blocked = new Uint8Array(this.map.size * this.map.size);
+    this.fog = new Uint8Array(this.map.size * this.map.size);
 
     const startCreds = this.config.startingCredits;
     this.players = {
@@ -119,7 +121,8 @@ export class GameWorld {
       soviets: this.createPlayer('soviets', this.config.balancedPvP ? startCreds : Math.round(startCreds * 0.9)),
     };
 
-    for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
+    const totalCells = this.map.size * this.map.size;
+    for (let i = 0; i < totalCells; i++) {
       this.blocked[i] = this.map.walkable[i] ? 0 : 1;
       if (this.map.ore[i] > 0) this.initialOreIndices.push(i);
     }
@@ -174,7 +177,7 @@ export class GameWorld {
     }
 
     if (this.config.cratesEnabled) {
-      this.spawnCrateAt(WORLD_SIZE * 0.5 + 4, WORLD_SIZE * 0.5 - 4, 'cash');
+      this.spawnCrateAt(this.map.worldSize * 0.5 + 4, this.map.worldSize * 0.5 - 4, 'cash');
     }
   }
 
@@ -226,7 +229,10 @@ export class GameWorld {
         this.spawnBuilding('power', 'allies', ax - 4, az - 2, true);
         this.spawnBuilding('prism', 'allies', ax + 4, az - 9, true);
       }
-      const mid = tileToWorld(38, 35);
+      const mid = tileToWorld(
+        Math.floor(this.map.size * 0.53),
+        Math.floor(this.map.size * 0.49)
+      );
       this.spawnUnit('rifle', aiFaction, mid.x, mid.z);
       this.spawnUnit('medium_tank', aiFaction, mid.x + 3, mid.z - 3);
     }
@@ -272,11 +278,12 @@ export class GameWorld {
   canPlaceBuilding(faction: Faction, type: BuildingType, gx: number, gz: number): boolean {
     const spec = BUILDING_SPECS[type];
     const [fw, fh] = spec.footprint;
-    if (gx < 1 || gz < 1 || gx + fw >= MAP_SIZE - 1 || gz + fh >= MAP_SIZE - 1) return false;
+    const ms = this.map.size;
+    if (gx < 1 || gz < 1 || gx + fw >= ms - 1 || gz + fh >= ms - 1) return false;
 
     for (let dz = 0; dz < fh; dz++) {
       for (let dx = 0; dx < fw; dx++) {
-        const idx = (gz + dz) * MAP_SIZE + (gx + dx);
+        const idx = (gz + dz) * ms + (gx + dx);
         if (!this.map.buildable[idx] || this.blocked[idx]) return false;
       }
     }
@@ -346,7 +353,7 @@ export class GameWorld {
     this.buildings.set(b.id, b);
     for (let dz = 0; dz < fh; dz++) {
       for (let dx = 0; dx < fw; dx++) {
-        this.blocked[(gz + dz) * MAP_SIZE + (gx + dx)] = 1;
+        this.blocked[(gz + dz) * this.map.size + (gx + dx)] = 1;
       }
     }
 
@@ -377,8 +384,8 @@ export class GameWorld {
         if (dx >= 0 && dx < fw && dz >= 0 && dz < fh) continue;
         const gx = b.gx + dx;
         const gz = b.gz + dz;
-        if (gx < 1 || gz < 1 || gx >= MAP_SIZE - 1 || gz >= MAP_SIZE - 1) continue;
-        if (!this.blocked[gz * MAP_SIZE + gx]) {
+        if (gx < 1 || gz < 1 || gx >= this.map.size - 1 || gz >= this.map.size - 1) continue;
+        if (!this.blocked[gz * this.map.size + gx]) {
           const score = dx * dir - dz * dir;
           candidates.push({ gx, gz, score });
         }
@@ -393,8 +400,8 @@ export class GameWorld {
 
   spawnUnit(type: UnitType, faction: Faction, x: number, z: number): UnitEntity {
     const spec = UNIT_SPECS[type];
-    const clampedX = Math.max(TILE_SIZE, Math.min(WORLD_SIZE - TILE_SIZE, x));
-    const clampedZ = Math.max(TILE_SIZE, Math.min(WORLD_SIZE - TILE_SIZE, z));
+    const clampedX = Math.max(TILE_SIZE, Math.min(this.map.worldSize - TILE_SIZE, x));
+    const clampedZ = Math.max(TILE_SIZE, Math.min(this.map.worldSize - TILE_SIZE, z));
     const y = sampleTerrainHeight(this.map, clampedX, clampedZ);
     const angle = faction === 'allies' ? -Math.PI * 0.25 : Math.PI * 0.75;
 
@@ -498,7 +505,7 @@ export class GameWorld {
     const [fw, fh] = spec.footprint;
     for (let dz = 0; dz < fh; dz++) {
       for (let dx = 0; dx < fw; dx++) {
-        const idx = (b.gz + dz) * MAP_SIZE + (b.gx + dx);
+        const idx = (b.gz + dz) * this.map.size + (b.gx + dx);
         this.blocked[idx] = this.map.walkable[idx] ? 0 : 1;
       }
     }
@@ -552,15 +559,17 @@ export class GameWorld {
       return false;
     }
 
-    const tx = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, target.x));
-    const tz = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, target.z));
+    const ws = this.map.worldSize;
+    const ms = this.map.size;
+    const tx = Math.max(TILE_SIZE * 2, Math.min(ws - TILE_SIZE * 2, target.x));
+    const tz = Math.max(TILE_SIZE * 2, Math.min(ws - TILE_SIZE * 2, target.z));
 
     if (weapon === 'chronoshift') {
       const src = source ?? target;
-      const sx = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, src.x));
-      const sz = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, src.z));
-      const destTile = worldToTile(tx, tz);
-      if (this.blocked[destTile.gz * MAP_SIZE + destTile.gx]) {
+      const sx = Math.max(TILE_SIZE * 2, Math.min(ws - TILE_SIZE * 2, src.x));
+      const sz = Math.max(TILE_SIZE * 2, Math.min(ws - TILE_SIZE * 2, src.z));
+      const destTile = worldToTile(tx, tz, ms);
+      if (this.blocked[destTile.gz * ms + destTile.gx]) {
         this.emitEva(faction, 'cannot_deploy', 'Cannot Chronoshift onto impassable terrain!');
         return false;
       }
@@ -588,10 +597,10 @@ export class GameWorld {
         const col = idx % cols;
         const ox = (col - (cols - 1) * 0.5) * 2.5;
         const oz = (row - (Math.ceil(candidates.length / cols) - 1) * 0.5) * 2.5;
-        const nx = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, tx + ox));
-        const nz = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, tz + oz));
-        const nt = worldToTile(nx, nz);
-        if (!this.blocked[nt.gz * MAP_SIZE + nt.gx] || UNIT_SPECS[u.type].isAir) {
+        const nx = Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, tx + ox));
+        const nz = Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, tz + oz));
+        const nt = worldToTile(nx, nz, ms);
+        if (!this.blocked[nt.gz * ms + nt.gx] || UNIT_SPECS[u.type].isAir) {
           u.x = nx;
           u.z = nz;
         } else {
@@ -790,9 +799,11 @@ export class GameWorld {
       const col = i % cols;
       const offsetX = (col - (cols - 1) * 0.5) * spacing;
       const offsetZ = (row - (Math.ceil(units.length / cols) - 1) * 0.5) * spacing;
+      const ws = this.map.worldSize;
+      const ms = this.map.size;
       const dest: Vec2 = {
-        x: Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, target.x + offsetX)),
-        z: Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, target.z + offsetZ)),
+        x: Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, target.x + offsetX)),
+        z: Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, target.z + offsetZ)),
       };
 
       // Chrono Tank iconic Phase-Blink! Warps up to 16 units instantaneously on long move orders!
@@ -803,10 +814,10 @@ export class GameWorld {
         const dist = Math.hypot(dx, dz);
         if (dist > 14) {
           const jump = Math.min(dist, 16);
-          const bx = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, u.x + (dx / dist) * jump));
-          const bz = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, u.z + (dz / dist) * jump));
-          const bt = worldToTile(bx, bz);
-          if (!this.blocked[bt.gz * MAP_SIZE + bt.gx]) {
+          const bx = Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, u.x + (dx / dist) * jump));
+          const bz = Math.max(TILE_SIZE * 1.5, Math.min(ws - TILE_SIZE * 1.5, u.z + (dz / dist) * jump));
+          const bt = worldToTile(bx, bz, ms);
+          if (!this.blocked[bt.gz * ms + bt.gx]) {
             const oldX = u.x;
             const oldY = u.y;
             const oldZ = u.z;
@@ -870,8 +881,8 @@ export class GameWorld {
       u.order = { type: 'harvest' };
       u.harvesterState = 'idle';
       if (targetWorld) {
-        const tile = worldToTile(targetWorld.x, targetWorld.z);
-        if (this.map.ore[tile.gz * MAP_SIZE + tile.gx] > 0) {
+        const tile = worldToTile(targetWorld.x, targetWorld.z, this.map.size);
+        if (this.map.ore[tile.gz * this.map.size + tile.gx] > 0) {
           u.harvestTarget = tile;
           u.harvesterState = 'moving_to_ore';
           u.path = findPath({ x: u.x, z: u.z }, targetWorld, this.blocked);
@@ -1189,10 +1200,11 @@ export class GameWorld {
     this.crateSpawnTimer -= dt;
     if (this.crateSpawnTimer <= 0 && this.crates.size < 3) {
       this.crateSpawnTimer = 34;
+      const ms = this.map.size;
       for (let attempt = 0; attempt < 25; attempt++) {
-        const gx = Math.floor(14 + this.rng() * (MAP_SIZE - 28));
-        const gz = Math.floor(14 + this.rng() * (MAP_SIZE - 28));
-        const idx = gz * MAP_SIZE + gx;
+        const gx = Math.floor(14 + this.rng() * Math.max(8, ms - 28));
+        const gz = Math.floor(14 + this.rng() * Math.max(8, ms - 28));
+        const idx = gz * ms + gx;
         if (!this.blocked[idx] && this.map.walkable[idx]) {
           const w = tileToWorld(gx, gz);
           this.spawnCrateAt(w.x, w.z);
@@ -1568,22 +1580,24 @@ export class GameWorld {
         u.vz = sepZ * 2.5;
       }
 
-      const nextX = Math.max(TILE_SIZE, Math.min(WORLD_SIZE - TILE_SIZE, u.x + u.vx * dt));
-      const nextZ = Math.max(TILE_SIZE, Math.min(WORLD_SIZE - TILE_SIZE, u.z + u.vz * dt));
+      const ws = this.map.worldSize;
+      const ms = this.map.size;
+      const nextX = Math.max(TILE_SIZE, Math.min(ws - TILE_SIZE, u.x + u.vx * dt));
+      const nextZ = Math.max(TILE_SIZE, Math.min(ws - TILE_SIZE, u.z + u.vz * dt));
 
       if (spec.isAir) {
         u.x = nextX;
         u.z = nextZ;
       } else {
-        const nextTile = worldToTile(nextX, nextZ);
-        if (!this.blocked[nextTile.gz * MAP_SIZE + nextTile.gx]) {
+        const nextTile = worldToTile(nextX, nextZ, ms);
+        if (!this.blocked[nextTile.gz * ms + nextTile.gx]) {
           u.x = nextX;
           u.z = nextZ;
         } else {
-          const tx = worldToTile(nextX, u.z);
-          const tz = worldToTile(u.x, nextZ);
-          if (!this.blocked[tx.gz * MAP_SIZE + tx.gx]) u.x = nextX;
-          else if (!this.blocked[tz.gz * MAP_SIZE + tz.gx]) u.z = nextZ;
+          const tx = worldToTile(nextX, u.z, ms);
+          const tz = worldToTile(u.x, nextZ, ms);
+          if (!this.blocked[tx.gz * ms + tx.gx]) u.x = nextX;
+          else if (!this.blocked[tz.gz * ms + tz.gx]) u.z = nextZ;
         }
       }
 
@@ -1794,7 +1808,7 @@ export class GameWorld {
         u.harvesterState = 'idle';
         return;
       }
-      const idx = u.harvestTarget.gz * MAP_SIZE + u.harvestTarget.gx;
+      const idx = u.harvestTarget.gz * this.map.size + u.harvestTarget.gx;
       if (this.map.ore[idx] <= 0) {
         u.harvesterState = 'idle';
         return;
@@ -1816,7 +1830,7 @@ export class GameWorld {
         u.harvesterState = 'idle';
         return;
       }
-      const idx = u.harvestTarget.gz * MAP_SIZE + u.harvestTarget.gx;
+      const idx = u.harvestTarget.gz * this.map.size + u.harvestTarget.gx;
       const available = this.map.ore[idx];
       if (available <= 0) {
         u.harvestTarget = null;
@@ -1919,9 +1933,10 @@ export class GameWorld {
     let bestGx = -1;
     let bestGz = -1;
     let bestD = Infinity;
-    for (let gz = 1; gz < MAP_SIZE - 1; gz++) {
-      for (let gx = 1; gx < MAP_SIZE - 1; gx++) {
-        const idx = gz * MAP_SIZE + gx;
+    const ms = this.map.size;
+    for (let gz = 1; gz < ms - 1; gz++) {
+      for (let gx = 1; gx < ms - 1; gx++) {
+        const idx = gz * ms + gx;
         if (this.map.ore[idx] <= 20) continue;
         const wx = (gx + 0.5) * TILE_SIZE;
         const wz = (gz + 0.5) * TILE_SIZE;
@@ -2256,7 +2271,7 @@ export class GameWorld {
     const [fw, fh] = BUILDING_SPECS[b.type].footprint;
     for (let dz = 0; dz < fh; dz++) {
       for (let dx = 0; dx < fw; dx++) {
-        const idx = (b.gz + dz) * MAP_SIZE + (b.gx + dx);
+        const idx = (b.gz + dz) * this.map.size + (b.gx + dx);
         this.blocked[idx] = this.map.walkable[idx] ? 0 : 1;
       }
     }
@@ -2301,21 +2316,22 @@ export class GameWorld {
       if (this.fog[i] === 2) this.fog[i] = 1;
     }
 
+    const ms = this.map.size;
     const reveal = (wx: number, wz: number, sightWorld: number) => {
       const rTiles = Math.ceil(sightWorld / TILE_SIZE);
-      const center = worldToTile(wx, wz);
+      const center = worldToTile(wx, wz, ms);
       const rSq = sightWorld * sightWorld;
       const minX = Math.max(0, center.gx - rTiles);
-      const maxX = Math.min(MAP_SIZE - 1, center.gx + rTiles);
+      const maxX = Math.min(ms - 1, center.gx + rTiles);
       const minZ = Math.max(0, center.gz - rTiles);
-      const maxZ = Math.min(MAP_SIZE - 1, center.gz + rTiles);
+      const maxZ = Math.min(ms - 1, center.gz + rTiles);
 
       for (let gz = minZ; gz <= maxZ; gz++) {
         const tz = (gz + 0.5) * TILE_SIZE - wz;
         for (let gx = minX; gx <= maxX; gx++) {
           const tx = (gx + 0.5) * TILE_SIZE - wx;
           if (tx * tx + tz * tz <= rSq) {
-            this.fog[gz * MAP_SIZE + gx] = 2;
+            this.fog[gz * ms + gx] = 2;
           }
         }
       }
@@ -2411,6 +2427,7 @@ export class GameWorld {
 
     return {
       mapPreset: this.map.preset,
+      mapSize: this.map.size,
       simTime: this.simTime,
       tickCount: this.tickCount,
       winner: this.winner,
@@ -2440,7 +2457,8 @@ export class GameWorld {
     this.players.soviets = snap.players.soviets;
 
     this.buildings.clear();
-    for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
+    const ms = this.map.size;
+    for (let i = 0; i < ms * ms; i++) {
       this.blocked[i] = this.map.walkable[i] ? 0 : 1;
     }
     for (const b of snap.buildings) {
@@ -2448,7 +2466,7 @@ export class GameWorld {
       const [fw, fh] = BUILDING_SPECS[b.type].footprint;
       for (let dz = 0; dz < fh; dz++) {
         for (let dx = 0; dx < fw; dx++) {
-          this.blocked[(b.gz + dz) * MAP_SIZE + (b.gx + dx)] = 1;
+          this.blocked[(b.gz + dz) * ms + (b.gx + dx)] = 1;
         }
       }
     }
@@ -2486,8 +2504,8 @@ export class GameWorld {
 
   isVisibleToPlayer(wx: number, wz: number): boolean {
     if (!this.fogEnabled) return true;
-    const t = worldToTile(wx, wz);
-    return this.fog[t.gz * MAP_SIZE + t.gx] === 2;
+    const t = worldToTile(wx, wz, this.map.size);
+    return this.fog[t.gz * this.map.size + t.gx] === 2;
   }
 
   private checkWinCondition(): void {

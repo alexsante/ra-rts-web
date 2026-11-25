@@ -11,11 +11,27 @@ import { GameWorld } from './world';
  * Oil Derricks, Crates, Sell/Repair, Allied & Soviet AI, and 100% deterministic Match Replays.
  */
 function runSmokeTest(): void {
-  // 1. Verify all 3 map presets generate cleanly
+  // 1. Verify all 3 map presets AND multiple custom map sizes (56, 72, 96, 128) generate & pathfind cleanly!
   for (const preset of ['canyon', 'arctic', 'volcanic'] as MapPreset[]) {
-    const w = new GameWorld({ mapPreset: preset, cratesEnabled: true });
-    if (w.derricks.size !== 2) throw new Error(`Expected 2 Oil Derricks on ${preset}`);
+    const w = new GameWorld({ mapPreset: preset, mapSize: 72, cratesEnabled: true });
+    if (w.derricks.size !== 2) throw new Error(`Expected 2 Oil Derricks on ${preset} (72x72)`);
     if (w.crates.size < 1) throw new Error(`Expected starter Bonus Crate on ${preset}`);
+  }
+  for (const sz of [56, 96, 128]) {
+    const w = new GameWorld({ mapPreset: 'canyon', mapSize: sz, cratesEnabled: true });
+    if (w.map.size !== sz || w.map.worldSize !== sz * 2) {
+      throw new Error(`Expected map size ${sz}, got ${w.map.size}`);
+    }
+    const expectedDerricks = sz >= 96 ? 4 : 2;
+    if (w.derricks.size !== expectedDerricks) {
+      throw new Error(`Expected ${expectedDerricks} Oil Derricks on ${sz}x${sz}, got ${w.derricks.size}`);
+    }
+    const tank = Array.from(w.units.values()).find((u) => u.faction === 'allies' && u.type === 'medium_tank')!;
+    w.issueMoveOrder([tank.id], { x: w.map.worldSize - 32, z: 32 }, false);
+    if (tank.path.length === 0) {
+      throw new Error(`Expected valid cross-map A* path on ${sz}x${sz} map`);
+    }
+    for (let i = 0; i < 20; i++) w.tick(SIM_DT);
   }
 
   // 2. Verify strict Asymmetric Faction Gating

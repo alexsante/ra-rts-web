@@ -20,7 +20,7 @@ A playable 3D real-time strategy game inspired by *Command & Conquer: Red Alert*
 - **Shared Core Infrastructure:** Construction Yard, Power Plant, Ore Refinery (with free Ore Harvester), Barracks, War Factory, Gun Turret, Tech Center, Rifle Squad, Rocket Squad, Ore Truck, Medium Tank, capturable **Tech Oil Derricks**, **Bonus Crates**, and Unit Veterancy (`★ Veteran` → `★★★ Elite`).
 
 ### 2. Pre-Game Command Lobby (Solo Skirmish & 1v1 Multiplayer)
-- Configure **Theater/Map** (*Canyon Protocol*, *Arctic Divide*, *Obsidian Caldera*), **Faction** (*Allies* or *Soviets*), **Starting Credits** (`$3,000` / `$5,000` / `$10,000`), **AI Difficulty** (*Easy* / *Normal* / *Brutal*), and rule toggles (**Fog of War**, **Bonus Crates**, **Superweapons**).
+- Configure **Theater/Map** (*Canyon Protocol*, *Arctic Divide*, *Obsidian Caldera*), **Map Size** (**Small `56×56`**, **Medium `72×72`**, **Large `96×96`** with 4 Oil Derricks, **Huge `128×128`**, or **Custom `48–160` tiles**), **Faction** (*Allies* or *Soviets*), **Starting Credits** (`$3,000` / `$5,000` / `$10,000`), **AI Difficulty** (*Easy* / *Normal* / *Brutal*), and rule toggles (**Fog of War**, **Bonus Crates**, **Superweapons**).
 - In **1v1 Multiplayer**, the Host configures settings (and can swap sides), shares a `?room=XXXXXX` link, both players Ready Up, and the match launches with synced settings.
 
 ### 3. Multiplayer Upgrades & Deterministic Match Replays

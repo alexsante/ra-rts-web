@@ -1,4 +1,4 @@
-import { MAP_SIZE, TILE_SIZE, WORLD_SIZE } from './config';
+import { MAP_SIZE, TILE_SIZE, WORLD_SIZE, clampMapSize } from './config';
 import { MapData, MapPreset, MapProp, MapThemeColors, Vec2 } from './types';
 
 function hash2d(x: number, y: number, seed = 1337): number {
@@ -79,16 +79,22 @@ export const MAP_THEMES: Record<MapPreset, MapThemeColors> = {
   },
 };
 
-export function roadDistance(wx: number, wz: number, preset: MapPreset = 'canyon'): number {
+export function roadDistance(
+  wx: number,
+  wz: number,
+  preset: MapPreset = 'canyon',
+  worldSize = WORLD_SIZE
+): number {
   let minD = 9999;
-  const steps = 48;
-  const waveAmp = preset === 'arctic' ? 16.0 : preset === 'volcanic' ? 6.0 : 11.0;
+  const scale = worldSize / 144;
+  const steps = Math.max(48, Math.round(48 * scale));
+  const waveAmp = (preset === 'arctic' ? 16.0 : preset === 'volcanic' ? 6.0 : 11.0) * scale;
   const waveFreq = preset === 'arctic' ? 1.5 : 2.0;
 
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    const baseX = 24 + t * (WORLD_SIZE - 48);
-    const baseZ = WORLD_SIZE - 24 - t * (WORLD_SIZE - 48);
+    const baseX = 24 + t * (worldSize - 48);
+    const baseZ = worldSize - 24 - t * (worldSize - 48);
     const wave = Math.sin(t * Math.PI * waveFreq) * waveAmp;
     const rx = baseX + wave * 0.707;
     const rz = baseZ + wave * 0.707;
@@ -107,6 +113,7 @@ interface MesaDef {
   angle: number;
 }
 
+// Reference mesas defined in 144×144 canonical space — scaled dynamically to any map size!
 const PRESET_MESAS: Record<MapPreset, MesaDef[]> = {
   canyon: [
     { cx: 52, cz: 60, rx: 14, rz: 9, height: 6.4, angle: 0.45 },
@@ -119,7 +126,6 @@ const PRESET_MESAS: Record<MapPreset, MesaDef[]> = {
     { cx: 70, cz: 137, rx: 24, rz: 6.5, height: 7.4, angle: -0.05 },
   ],
   arctic: [
-    // Sharp twin alpine ridges creating wide flanking corridors
     { cx: 60, cz: 48, rx: 15, rz: 8.5, height: 7.8, angle: -0.55 },
     { cx: 84, cz: 96, rx: 15, rz: 8.5, height: 7.8, angle: -0.55 },
     { cx: 16, cz: 18, rx: 16, rz: 16, height: 9.2, angle: 0.3 },
@@ -128,7 +134,6 @@ const PRESET_MESAS: Record<MapPreset, MesaDef[]> = {
     { cx: 120, cz: 72, rx: 8, rz: 10, height: 6.2, angle: -0.1 },
   ],
   volcanic: [
-    // Central caldera ring with 3 dramatic breach lanes
     { cx: 56, cz: 72, rx: 10, rz: 14, height: 7.4, angle: 0.25 },
     { cx: 88, cz: 72, rx: 10, rz: 14, height: 7.4, angle: 0.25 },
     { cx: 72, cz: 20, rx: 19, rz: 8, height: 8.5, angle: 0.0 },
@@ -155,8 +160,10 @@ export function sampleTerrainHeight(map: MapData, wx: number, wz: number): numbe
   return hx0 * (1 - tz) + hx1 * tz;
 }
 
-export function generateMap(preset: MapPreset = 'canyon'): MapData {
-  const size = MAP_SIZE;
+export function generateMap(preset: MapPreset = 'canyon', rawSize = MAP_SIZE): MapData {
+  const size = clampMapSize(rawSize);
+  const worldSize = size * TILE_SIZE;
+  const scale = worldSize / 144;
   const cols = size + 1;
   const heights = new Float32Array(cols * cols);
   const walkable = new Uint8Array(size * size);
@@ -165,16 +172,29 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
   const ore = new Float32Array(size * size);
   const isGem = new Uint8Array(size * size);
 
-  const alliesCenter = { x: 24, z: WORLD_SIZE - 24 };
-  const sovietsCenter = { x: WORLD_SIZE - 24, z: 24 };
-  const mesas = PRESET_MESAS[preset];
+  const alliesCenter = { x: 24, z: worldSize - 24 };
+  const sovietsCenter = { x: worldSize - 24, z: 24 };
+  const mesas: MesaDef[] = PRESET_MESAS[preset].map((m) => ({
+    cx: m.cx * scale,
+    cz: m.cz * scale,
+    rx: m.rx * scale,
+    rz: m.rz * scale,
+    height: m.height * (0.88 + 0.12 * Math.min(1.8, scale)),
+    angle: m.angle,
+  }));
   const seed = preset === 'arctic' ? 2025 : preset === 'volcanic' ? 6667 : 42;
 
-  // Flanking Tech Oil Derrick coordinates (always flat & reachable)
+  // Flanking Tech Oil Derrick coordinates (always flat & reachable; Large/Huge maps get 4!)
   const derrickSpots: Vec2[] = [
-    { x: 24, z: 54 }, // West flank derrick
-    { x: WORLD_SIZE - 24, z: WORLD_SIZE - 54 }, // East flank derrick
+    { x: Math.round(24 * scale), z: Math.round(54 * scale) },
+    { x: Math.round(worldSize - 24 * scale), z: Math.round(worldSize - 54 * scale) },
   ];
+  if (size >= 96) {
+    derrickSpots.push(
+      { x: Math.round(worldSize * 0.24), z: Math.round(worldSize * 0.24) },
+      { x: Math.round(worldSize * 0.76), z: Math.round(worldSize * 0.76) }
+    );
+  }
 
   for (let vz = 0; vz < cols; vz++) {
     for (let vx = 0; vx < cols; vx++) {
@@ -194,7 +214,7 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
         const ell = Math.hypot(lx / m.rx, lz / m.rz) + n;
         if (ell < 1.15) {
           const plateau = 1.0 - smoothstep(0.68, 1.08, ell);
-          const terraced = Math.round(plateau * 4.5) / 4.5 * 0.3 + plateau * 0.7;
+          const terraced = (Math.round(plateau * 4.5) / 4.5) * 0.3 + plateau * 0.7;
           const capRoughness = (fbm(wx * 0.14, wz * 0.14, seed + 261) - 0.5) * 0.7;
           h = Math.max(h, terraced * m.height + plateau * capRoughness);
         }
@@ -212,7 +232,7 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
       }
       h *= 1 - flatten * 0.92;
 
-      const rDist = roadDistance(wx, wz, preset);
+      const rDist = roadDistance(wx, wz, preset, worldSize);
       const roadFlatten = 1 - smoothstep(4.2, 8.5, rDist);
       h *= 1 - roadFlatten * 0.94;
 
@@ -233,7 +253,7 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
       const avgH = (h00 + h10 + h01 + h11) * 0.25;
       const maxDiff = Math.max(h00, h10, h01, h11) - Math.min(h00, h10, h01, h11);
 
-      const rDist = roadDistance(wx, wz, preset);
+      const rDist = roadDistance(wx, wz, preset, worldSize);
       const onRoad = 1 - smoothstep(2.9, 4.1, rDist);
       roadMask[idx] = onRoad;
 
@@ -244,7 +264,6 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
       buildable[idx] =
         !nearBorder && !isCliff && avgH < 0.85 && maxDiff < 0.38 && onRoad < 0.35 ? 1 : 0;
 
-      // Reserve tiny footprint directly around Tech Oil Derricks
       for (const ds of derrickSpots) {
         if (Math.hypot(wx - ds.x, wz - ds.z) < 4.0) {
           buildable[idx] = 0;
@@ -253,7 +272,13 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
     }
   }
 
-  const addOrePatch = (cx: number, cz: number, radiusTiles: number, amount: number, gem = false) => {
+  const addOrePatch = (
+    cx: number,
+    cz: number,
+    radiusTiles: number,
+    amount: number,
+    gem = false
+  ) => {
     for (let dz = -radiusTiles; dz <= radiusTiles; dz++) {
       for (let dx = -radiusTiles; dx <= radiusTiles; dx++) {
         const gx = cx + dx;
@@ -273,17 +298,25 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
     }
   };
 
-  // Safe starting ore patches
+  // Safe starting ore patches right beside each base
   addOrePatch(22, size - 14, 4, 900, false);
   addOrePatch(8, size - 22, 3, 800, false);
   addOrePatch(size - 22, 14, 4, 900, false);
   addOrePatch(size - 8, 22, 3, 800, false);
 
-  // Rich contested gem basins
+  // Rich contested gem basins scaled proportionally
   const gemAmt = preset === 'volcanic' ? 1850 : 1400;
-  addOrePatch(16, 36, 3, gemAmt, true);
-  addOrePatch(size - 16, size - 36, 3, gemAmt, true);
+  const flankX = Math.round(size * 0.22);
+  const flankZ = Math.round(size * 0.5);
+  addOrePatch(flankX, flankZ, 3, gemAmt, true);
+  addOrePatch(size - flankX, size - flankZ, 3, gemAmt, true);
   addOrePatch(Math.floor(size / 2), Math.floor(size / 2), 3, gemAmt + 250, true);
+
+  // Extra expansion ore fields on Large/Huge theaters
+  if (size >= 92) {
+    addOrePatch(Math.round(size * 0.36), Math.round(size * 0.78), 4, 1100, false);
+    addOrePatch(Math.round(size * 0.64), Math.round(size * 0.22), 4, 1100, false);
+  }
 
   const props: MapProp[] = [];
   const mapObj: MapData = {
@@ -291,7 +324,7 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
     theme: MAP_THEMES[preset],
     size,
     tileSize: TILE_SIZE,
-    worldSize: WORLD_SIZE,
+    worldSize,
     heights,
     walkable,
     buildable,
@@ -304,7 +337,8 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
     sovietsStart: { gx: size - 13, gz: 10 },
   };
 
-  for (let i = 0; i < 165; i++) {
+  const propAttempts = Math.min(420, Math.round(165 * scale * scale));
+  for (let i = 0; i < propAttempts; i++) {
     const r1 = hash2d(i, 1, seed + 5150);
     const r2 = hash2d(i, 2, seed + 5150);
     const r3 = hash2d(i, 3, seed + 5150);
@@ -323,7 +357,12 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
     const h = sampleTerrainHeight(mapObj, wx, wz);
     if (!walkable[idx] && h > 2.2) {
       props.push({
-        kind: preset === 'arctic' && r3 > 0.45 ? 'pine_tree' : r3 > 0.45 ? 'rock_large' : 'rock_small',
+        kind:
+          preset === 'arctic' && r3 > 0.45
+            ? 'pine_tree'
+            : r3 > 0.45
+            ? 'rock_large'
+            : 'rock_small',
         x: wx,
         y: h - 0.12,
         z: wz,
@@ -331,7 +370,7 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
         rotation: r3 * Math.PI * 2,
       });
     } else if (walkable[idx] && r3 > 0.72) {
-      const rd = roadDistance(wx, wz, preset);
+      const rd = roadDistance(wx, wz, preset, worldSize);
       if (rd > 4.6 && rd < 7.8) {
         props.push({
           kind: r4 > 0.5 ? 'barrels' : 'outpost_crate',
@@ -348,6 +387,6 @@ export function generateMap(preset: MapPreset = 'canyon'): MapData {
   return mapObj;
 }
 
-export function generateCanyonMap(): MapData {
-  return generateMap('canyon');
+export function generateCanyonMap(size = MAP_SIZE): MapData {
+  return generateMap('canyon', size);
 }

@@ -3,10 +3,9 @@ import type { LobbyStatePayload } from '../net/protocol';
 import {
   BUILDING_SPECS,
   FACTION_SUPERWEAPONS,
-  MAP_SIZE,
   TILE_SIZE,
   UNIT_SPECS,
-  WORLD_SIZE,
+  clampMapSize,
   getBuildingsForFaction,
   getUnitsForFaction,
 } from '../sim/config';
@@ -141,6 +140,8 @@ export class HUDController {
   private readonly mpStartBtn = document.getElementById('btn-mp-start') as HTMLButtonElement;
 
   private readonly cfgMapSelect = document.getElementById('cfg-map') as HTMLSelectElement;
+  private readonly cfgMapSizeSelect = document.getElementById('cfg-map-size') as HTMLSelectElement;
+  private readonly cfgMapSizeCustom = document.getElementById('cfg-map-size-custom') as HTMLInputElement;
   private readonly cfgFactionSelect = document.getElementById('cfg-faction') as HTMLSelectElement;
   private readonly cfgFactionTitle = document.getElementById('cfg-faction-title')!;
   private readonly cfgCreditsSelect = document.getElementById('cfg-credits') as HTMLSelectElement;
@@ -189,6 +190,7 @@ export class HUDController {
 
   private minimapDragging = false;
   private minimapTerrainCache: HTMLCanvasElement | null = null;
+  private currentWorldSize = 144;
   private cardButtons = new Map<string, HTMLButtonElement>();
 
   constructor(private readonly cb: HUDCallbacks) {
@@ -296,12 +298,24 @@ export class HUDController {
     });
 
     const onConfigInput = () => {
+      const isCustom = this.cfgMapSizeSelect.value === 'custom';
+      this.cfgMapSizeCustom.classList.toggle('hidden', !isCustom);
       this.updateFactionBriefing(this.cfgFactionSelect.value as Faction);
       if (this.isMpHost) {
         cb.onUpdateLobbyConfig(this.readConfigFromForm());
       }
     };
     this.cfgMapSelect.addEventListener('change', onConfigInput);
+    this.cfgMapSizeSelect.addEventListener('change', () => {
+      onConfigInput();
+      if (this.cfgMapSizeSelect.value === 'custom') {
+        this.cfgMapSizeCustom.focus();
+      }
+    });
+    this.cfgMapSizeCustom.addEventListener('change', () => {
+      this.cfgMapSizeCustom.value = String(clampMapSize(Number(this.cfgMapSizeCustom.value)));
+      onConfigInput();
+    });
     this.cfgFactionSelect.addEventListener('change', onConfigInput);
     this.cfgCreditsSelect.addEventListener('change', onConfigInput);
     this.cfgDifficultySelect.addEventListener('change', onConfigInput);
@@ -410,14 +424,18 @@ export class HUDController {
       const rect = this.minimapCanvas.getBoundingClientRect();
       const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-      cb.onMinimapClick(nx * WORLD_SIZE, ny * WORLD_SIZE);
+      cb.onMinimapClick(nx * this.currentWorldSize, ny * this.currentWorldSize);
     };
     this.minimapCanvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const rect = this.minimapCanvas.getBoundingClientRect();
       const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-      cb.onMinimapRightClick(nx * WORLD_SIZE, ny * WORLD_SIZE, e.shiftKey || e.altKey);
+      cb.onMinimapRightClick(
+        nx * this.currentWorldSize,
+        ny * this.currentWorldSize,
+        e.shiftKey || e.altKey
+      );
     });
     this.minimapCanvas.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
@@ -436,9 +454,14 @@ export class HUDController {
   }
 
   readConfigFromForm(): MatchConfig {
+    const rawSize =
+      this.cfgMapSizeSelect.value === 'custom'
+        ? Number(this.cfgMapSizeCustom.value)
+        : Number(this.cfgMapSizeSelect.value);
     return {
       ...DEFAULT_MATCH_CONFIG,
       mapPreset: this.cfgMapSelect.value as MapPreset,
+      mapSize: clampMapSize(rawSize),
       hostFaction: this.cfgFactionSelect.value as Faction,
       startingCredits: Number(this.cfgCreditsSelect.value) || 5000,
       difficulty: this.cfgDifficultySelect.value as AIDifficulty,
@@ -452,13 +475,25 @@ export class HUDController {
 
   applyConfigToForm(cfg: MatchConfig): void {
     this.cfgMapSelect.value = cfg.mapPreset;
+    const size = clampMapSize(cfg.mapSize);
+    const presetValues = ['56', '72', '96', '128'];
+    if (presetValues.includes(String(size))) {
+      this.cfgMapSizeSelect.value = String(size);
+      this.cfgMapSizeCustom.classList.add('hidden');
+    } else {
+      this.cfgMapSizeSelect.value = 'custom';
+      this.cfgMapSizeCustom.value = String(size);
+      this.cfgMapSizeCustom.classList.remove('hidden');
+    }
     this.cfgFactionSelect.value = cfg.hostFaction;
     this.cfgCreditsSelect.value = String(cfg.startingCredits);
     this.cfgDifficultySelect.value = cfg.difficulty;
     this.cfgFogCheck.checked = cfg.fogOfWar;
     this.cfgCratesCheck.checked = cfg.cratesEnabled;
     this.cfgSwCheck.checked = cfg.superweaponsEnabled;
-    this.updateFactionBriefing(this.isMpGuest ? (cfg.hostFaction === 'allies' ? 'soviets' : 'allies') : cfg.hostFaction);
+    this.updateFactionBriefing(
+      this.isMpGuest ? (cfg.hostFaction === 'allies' ? 'soviets' : 'allies') : cfg.hostFaction
+    );
   }
 
   private updateFactionBriefing(faction: Faction): void {
@@ -688,6 +723,8 @@ export class HUDController {
     // Disable config form fields for Guest (read-only synced view)
     const lockConfig = this.isMpGuest || isLive;
     this.cfgMapSelect.disabled = lockConfig;
+    this.cfgMapSizeSelect.disabled = lockConfig;
+    this.cfgMapSizeCustom.disabled = lockConfig;
     this.cfgFactionSelect.disabled = lockConfig;
     this.cfgCreditsSelect.disabled = lockConfig;
     this.cfgDifficultySelect.disabled = lockConfig;
@@ -819,7 +856,8 @@ export class HUDController {
       this.rebuildCards();
     }
 
-    this.mapSubtitleEl.textContent = world.map.theme.name.toUpperCase();
+    this.currentWorldSize = world.map.worldSize;
+    this.mapSubtitleEl.textContent = `${world.map.theme.name.toUpperCase()} · ${world.map.size}×${world.map.size}`;
     this.factionPillEl.textContent = faction === 'allies' ? 'ALLIES' : 'SOVIETS';
     this.factionPillEl.className = `faction-pill ${faction}`;
 
@@ -1051,16 +1089,17 @@ export class HUDController {
 
   private ensureMinimapTerrainCache(world: GameWorld): void {
     if (this.minimapTerrainCache) return;
+    const ms = world.map.size;
     const c = document.createElement('canvas');
-    c.width = MAP_SIZE;
-    c.height = MAP_SIZE;
+    c.width = ms;
+    c.height = ms;
     const ctx = c.getContext('2d')!;
-    const img = ctx.createImageData(MAP_SIZE, MAP_SIZE);
+    const img = ctx.createImageData(ms, ms);
     const preset = world.map.preset;
 
-    for (let gz = 0; gz < MAP_SIZE; gz++) {
-      for (let gx = 0; gx < MAP_SIZE; gx++) {
-        const idx = gz * MAP_SIZE + gx;
+    for (let gz = 0; gz < ms; gz++) {
+      for (let gx = 0; gx < ms; gx++) {
+        const idx = gz * ms + gx;
         const o = idx * 4;
         if (!world.map.walkable[idx]) {
           img.data[o] = preset === 'arctic' ? 88 : preset === 'volcanic' ? 54 : 102;
@@ -1087,15 +1126,17 @@ export class HUDController {
     const ctx = this.minimapCtx;
     const w = this.minimapCanvas.width;
     const h = this.minimapCanvas.height;
-    const scaleX = w / WORLD_SIZE;
-    const scaleY = h / WORLD_SIZE;
+    const ms = world.map.size;
+    const ws = world.map.worldSize;
+    const scaleX = w / ws;
+    const scaleY = h / ws;
 
     ctx.drawImage(this.minimapTerrainCache!, 0, 0, w, h);
 
-    const tilePx = w / MAP_SIZE;
-    for (let gz = 0; gz < MAP_SIZE; gz++) {
-      for (let gx = 0; gx < MAP_SIZE; gx++) {
-        const idx = gz * MAP_SIZE + gx;
+    const tilePx = w / ms;
+    for (let gz = 0; gz < ms; gz++) {
+      for (let gx = 0; gx < ms; gx++) {
+        const idx = gz * ms + gx;
         if (world.map.ore[idx] > 20) {
           ctx.fillStyle = world.map.isGem[idx] ? '#ff4c75' : '#f5b82e';
           ctx.fillRect(gx * tilePx, gz * tilePx, Math.ceil(tilePx), Math.ceil(tilePx));
@@ -1115,7 +1156,7 @@ export class HUDController {
     }
 
     for (const b of world.buildings.values()) {
-      const tileIdx = Math.floor(b.z / TILE_SIZE) * MAP_SIZE + Math.floor(b.x / TILE_SIZE);
+      const tileIdx = Math.floor(b.z / TILE_SIZE) * ms + Math.floor(b.x / TILE_SIZE);
       if (b.faction !== world.localFaction && world.fogEnabled && world.fog[tileIdx] === 0) {
         continue;
       }
@@ -1136,9 +1177,9 @@ export class HUDController {
     }
 
     if (world.fogEnabled) {
-      for (let gz = 0; gz < MAP_SIZE; gz++) {
-        for (let gx = 0; gx < MAP_SIZE; gx++) {
-          const state = world.fog[gz * MAP_SIZE + gx];
+      for (let gz = 0; gz < ms; gz++) {
+        for (let gx = 0; gx < ms; gx++) {
+          const state = world.fog[gz * ms + gx];
           if (state === 2) continue;
           ctx.fillStyle = state === 1 ? 'rgba(8,10,14,0.42)' : 'rgba(8,10,14,0.88)';
           ctx.fillRect(gx * tilePx, gz * tilePx, Math.ceil(tilePx), Math.ceil(tilePx));

@@ -1217,6 +1217,21 @@ body {
   padding: 7px 8px;
 }
 
+.map-size-row {
+  display: flex;
+  gap: 6px;
+}
+
+.custom-size-input {
+  width: 72px;
+  text-align: center;
+  user-select: text;
+}
+
+.custom-size-input.hidden {
+  display: none;
+}
+
 .cfg-toggles {
   display: flex;
   flex-wrap: wrap;

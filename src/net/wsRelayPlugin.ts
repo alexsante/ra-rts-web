@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Plugin, PreviewServer, ViteDevServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
+import { clampMapSize } from '../sim/config';
 import { DEFAULT_MATCH_CONFIG, type Faction, type MatchConfig } from '../sim/types';
 import type { ClientToServerMsg, LobbyStatePayload, ServerToClientMsg } from './protocol';
 
@@ -70,6 +71,7 @@ function sanitizeConfig(input?: Partial<MatchConfig>, base?: MatchConfig): Match
 
   return {
     mapPreset,
+    mapSize: clampMapSize(input?.mapSize ?? prev.mapSize),
     hostFaction,
     startingCredits,
     difficulty,

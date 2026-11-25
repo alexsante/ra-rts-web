@@ -81,20 +81,22 @@ export class VFXManager {
   private readonly nukes: FallingNuke[] = [];
   private readonly wrecks: WreckageHulk[] = [];
   private ambientDust: THREE.Points;
+  private worldSize: number;
 
   private readonly ringGeo = new THREE.RingGeometry(0.45, 0.85, 28);
   private readonly craterGeo = new THREE.PlaneGeometry(1, 1);
 
-  constructor(dustHex = 0xf4cfa0) {
+  constructor(dustHex = 0xf4cfa0, worldSize = 144) {
+    this.worldSize = worldSize;
     this.ringGeo.rotateX(-Math.PI / 2);
     this.craterGeo.rotateX(-Math.PI / 2);
 
     const count = 280;
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = Math.random() * 144;
+      positions[i * 3] = Math.random() * worldSize;
       positions[i * 3 + 1] = 1.5 + Math.random() * 16;
-      positions[i * 3 + 2] = Math.random() * 144;
+      positions[i * 3 + 2] = Math.random() * worldSize;
     }
     const dustGeo = new THREE.BufferGeometry();
     dustGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -111,6 +113,16 @@ export class VFXManager {
 
   setDustColor(hex: number): void {
     (this.ambientDust.material as THREE.PointsMaterial).color.setHex(hex);
+  }
+
+  setWorldSize(ws: number): void {
+    this.worldSize = ws;
+    const pos = this.ambientDust.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setX(i, Math.random() * ws);
+      pos.setZ(i, Math.random() * ws);
+    }
+    pos.needsUpdate = true;
   }
 
   addShake(amount: number): void {
@@ -818,7 +830,7 @@ export class VFXManager {
     const pos = this.ambientDust.geometry.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
       let x = pos.getX(i) + dt * 1.4;
-      if (x > 144) x -= 144;
+      if (x > this.worldSize) x -= this.worldSize;
       pos.setX(i, x);
     }
     pos.needsUpdate = true;

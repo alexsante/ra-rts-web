@@ -12,16 +12,27 @@ const DIRS: ReadonlyArray<[number, number, number]> = [
   [-1, -1, 1.4142],
 ];
 
-// Reusable typed arrays for zero-GC A*
-const TOTAL_CELLS = MAP_SIZE * MAP_SIZE;
-const gScore = new Float32Array(TOTAL_CELLS);
-const fScore = new Float32Array(TOTAL_CELLS);
-const cameFrom = new Int32Array(TOTAL_CELLS);
-const closedStamp = new Int32Array(TOTAL_CELLS);
-const openStamp = new Int32Array(TOTAL_CELLS);
+// Dynamically resizable zero-GC A* buffers supporting any map dimension
+let allocatedCells = MAP_SIZE * MAP_SIZE;
+let gScore = new Float32Array(allocatedCells);
+let fScore = new Float32Array(allocatedCells);
+let cameFrom = new Int32Array(allocatedCells);
+let closedStamp = new Int32Array(allocatedCells);
+let openStamp = new Int32Array(allocatedCells);
 let searchId = 1;
 
-// Simple binary min-heap for open set
+function ensureBuffers(mapSize: number): void {
+  const needed = mapSize * mapSize;
+  if (needed <= allocatedCells) return;
+  allocatedCells = needed;
+  gScore = new Float32Array(needed);
+  fScore = new Float32Array(needed);
+  cameFrom = new Int32Array(needed);
+  closedStamp = new Int32Array(needed);
+  openStamp = new Int32Array(needed);
+  searchId = 1;
+}
+
 class MinHeap {
   private nodes: number[] = [];
 
@@ -97,9 +108,10 @@ function findNearestPassable(
   gx: number,
   gz: number,
   blocked: Uint8Array,
+  mapSize: number,
   maxRadius = 8
 ): { gx: number; gz: number } | null {
-  if (!blocked[gz * MAP_SIZE + gx]) return { gx, gz };
+  if (!blocked[gz * mapSize + gx]) return { gx, gz };
   for (let r = 1; r <= maxRadius; r++) {
     let best: { gx: number; gz: number } | null = null;
     let bestD = Infinity;
@@ -108,8 +120,8 @@ function findNearestPassable(
         if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
         const nx = gx + dx;
         const nz = gz + dz;
-        if (nx < 1 || nz < 1 || nx >= MAP_SIZE - 1 || nz >= MAP_SIZE - 1) continue;
-        if (!blocked[nz * MAP_SIZE + nx]) {
+        if (nx < 1 || nz < 1 || nx >= mapSize - 1 || nz >= mapSize - 1) continue;
+        if (!blocked[nz * mapSize + nx]) {
           const d = dx * dx + dz * dz;
           if (d < bestD) {
             bestD = d;
@@ -128,7 +140,8 @@ function lineClear(
   z0: number,
   x1: number,
   z1: number,
-  blocked: Uint8Array
+  blocked: Uint8Array,
+  mapSize: number
 ): boolean {
   const dx = x1 - x0;
   const dz = z1 - z0;
@@ -138,8 +151,8 @@ function lineClear(
     const t = i / steps;
     const gx = Math.floor(x0 + dx * t + 0.5);
     const gz = Math.floor(z0 + dz * t + 0.5);
-    if (gx < 0 || gz < 0 || gx >= MAP_SIZE || gz >= MAP_SIZE) return false;
-    if (blocked[gz * MAP_SIZE + gx]) return false;
+    if (gx < 0 || gz < 0 || gx >= mapSize || gz >= mapSize) return false;
+    if (blocked[gz * mapSize + gx]) return false;
   }
   return true;
 }
@@ -147,13 +160,16 @@ function lineClear(
 export function findPath(
   startWorld: Vec2,
   goalWorld: Vec2,
-  blocked: Uint8Array
+  blocked: Uint8Array,
+  mapSize = Math.round(Math.sqrt(blocked.length))
 ): Vec2[] {
-  const startTileRaw = worldToTile(startWorld.x, startWorld.z);
-  const goalTileRaw = worldToTile(goalWorld.x, goalWorld.z);
+  ensureBuffers(mapSize);
 
-  const startTile = findNearestPassable(startTileRaw.gx, startTileRaw.gz, blocked, 6);
-  const goalTile = findNearestPassable(goalTileRaw.gx, goalTileRaw.gz, blocked, 8);
+  const startTileRaw = worldToTile(startWorld.x, startWorld.z, mapSize);
+  const goalTileRaw = worldToTile(goalWorld.x, goalWorld.z, mapSize);
+
+  const startTile = findNearestPassable(startTileRaw.gx, startTileRaw.gz, blocked, mapSize, 6);
+  const goalTile = findNearestPassable(goalTileRaw.gx, goalTileRaw.gz, blocked, mapSize, 8);
   if (!startTile || !goalTile) return [];
 
   if (startTile.gx === goalTile.gx && startTile.gz === goalTile.gz) {
@@ -167,8 +183,8 @@ export function findPath(
     searchId = 1;
   }
 
-  const startIdx = startTile.gz * MAP_SIZE + startTile.gx;
-  const goalIdx = goalTile.gz * MAP_SIZE + goalTile.gx;
+  const startIdx = startTile.gz * mapSize + startTile.gx;
+  const goalIdx = goalTile.gz * mapSize + goalTile.gx;
 
   openHeap.clear();
   gScore[startIdx] = 0;
@@ -181,7 +197,7 @@ export function findPath(
   let closestIdx = startIdx;
   let closestH = fScore[startIdx];
   let iterations = 0;
-  const maxIterations = 2400;
+  const maxIterations = Math.max(2400, Math.round(mapSize * mapSize * 0.65));
 
   while (openHeap.size > 0 && iterations++ < maxIterations) {
     const current = openHeap.pop();
@@ -193,21 +209,20 @@ export function findPath(
       break;
     }
 
-    const cx = current % MAP_SIZE;
-    const cz = (current - cx) / MAP_SIZE;
+    const cx = current % mapSize;
+    const cz = (current - cx) / mapSize;
     const curG = gScore[current];
 
     for (const [dx, dz, cost] of DIRS) {
       const nx = cx + dx;
       const nz = cz + dz;
-      if (nx < 0 || nz < 0 || nx >= MAP_SIZE || nz >= MAP_SIZE) continue;
-      const nIdx = nz * MAP_SIZE + nx;
+      if (nx < 0 || nz < 0 || nx >= mapSize || nz >= mapSize) continue;
+      const nIdx = nz * mapSize + nx;
       if (closedStamp[nIdx] === searchId) continue;
       if (blocked[nIdx]) continue;
 
-      // Prevent squeezing diagonally through two blocked corners
       if (dx !== 0 && dz !== 0) {
-        if (blocked[cz * MAP_SIZE + nx] || blocked[nz * MAP_SIZE + cx]) continue;
+        if (blocked[cz * mapSize + nx] || blocked[nz * mapSize + cx]) continue;
       }
 
       const tentativeG = curG + cost;
@@ -230,26 +245,24 @@ export function findPath(
   const endIdx = found ? goalIdx : closestIdx;
   if (endIdx === startIdx) return [];
 
-  // Reconstruct tile path
   const tiles: Array<{ gx: number; gz: number }> = [];
   let cur = endIdx;
   while (cur !== -1 && cur !== startIdx) {
-    const gx = cur % MAP_SIZE;
-    const gz = (cur - gx) / MAP_SIZE;
+    const gx = cur % mapSize;
+    const gz = (cur - gx) / mapSize;
     tiles.push({ gx, gz });
     cur = cameFrom[cur];
   }
   tiles.reverse();
   if (tiles.length === 0) return [];
 
-  // String-pull smoothing so units move in crisp natural lines
   const smoothed: Array<{ gx: number; gz: number }> = [];
   let anchor = startTile;
   let i = 0;
   while (i < tiles.length) {
     let farthest = i;
     for (let j = Math.min(tiles.length - 1, i + 12); j > i; j--) {
-      if (lineClear(anchor.gx, anchor.gz, tiles[j].gx, tiles[j].gz, blocked)) {
+      if (lineClear(anchor.gx, anchor.gz, tiles[j].gx, tiles[j].gz, blocked, mapSize)) {
         farthest = j;
         break;
       }
@@ -260,8 +273,7 @@ export function findPath(
   }
 
   const waypoints = smoothed.map((t) => tileToWorld(t.gx, t.gz));
-  // If the exact goal world coordinate is walkable, use it as the final waypoint for precision
-  if (found && !blocked[goalTileRaw.gz * MAP_SIZE + goalTileRaw.gx]) {
+  if (found && !blocked[goalTileRaw.gz * mapSize + goalTileRaw.gx]) {
     waypoints[waypoints.length - 1] = { x: goalWorld.x, z: goalWorld.z };
   }
   return waypoints;

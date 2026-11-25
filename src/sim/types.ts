@@ -4,6 +4,7 @@ export type AIDifficulty = 'easy' | 'normal' | 'brutal';
 
 export interface MatchConfig {
   mapPreset: MapPreset;
+  mapSize: number;
   hostFaction: Faction;
   startingCredits: number;
   difficulty: AIDifficulty;
@@ -16,6 +17,7 @@ export interface MatchConfig {
 
 export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   mapPreset: 'canyon',
+  mapSize: 72,
   hostFaction: 'allies',
   startingCredits: 5000,
   difficulty: 'normal',

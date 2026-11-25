@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { BUILD_RADIUS_TILES, BUILDING_SPECS, TILE_SIZE, UNIT_SPECS, WORLD_SIZE } from '../sim/config';
+import { BUILD_RADIUS_TILES, BUILDING_SPECS, TILE_SIZE, UNIT_SPECS } from '../sim/config';
 import { sampleTerrainHeight } from '../sim/mapGen';
 import {
   BuildingType,
@@ -55,8 +55,9 @@ export class GameRenderer {
   private readonly sunLight: THREE.DirectionalLight;
   private envTexture: THREE.Texture | null = null;
   private terrain: TerrainVisuals;
+  private worldSize: number;
 
-  camTarget = new THREE.Vector3(28, 0, WORLD_SIZE - 28);
+  camTarget = new THREE.Vector3(28, 0, 116);
   camDistance = 42;
   camPitch = 0.86;
   camYaw = 0.45;
@@ -124,23 +125,27 @@ export class GameRenderer {
     this.scene.environment = this.envTexture;
     this.scene.environmentIntensity = 0.85;
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 1, 380);
+    this.worldSize = world.map.worldSize;
+    this.camTarget.set(28, 0, this.worldSize - 28);
+
+    this.camera = new THREE.PerspectiveCamera(42, 1, 1, Math.max(380, this.worldSize * 2.8));
 
     this.hemiLight = new THREE.HemisphereLight(theme.hemiSkyHex, theme.hemiGroundHex, 0.92);
     this.scene.add(this.hemiLight);
 
     this.sunLight = new THREE.DirectionalLight(theme.sunHex, theme.sunIntensity);
-    this.sunLight.position.set(115, 92, 118);
-    this.sunLight.target.position.set(WORLD_SIZE * 0.5, 0, WORLD_SIZE * 0.5);
+    const halfW = this.worldSize * 0.5;
+    const shadowHalf = Math.max(88, this.worldSize * 0.62);
+    this.sunLight.position.set(halfW + 45, Math.max(92, this.worldSize * 0.65), halfW + 46);
+    this.sunLight.target.position.set(halfW, 0, halfW);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
-    const d = 88;
-    this.sunLight.shadow.camera.left = -d;
-    this.sunLight.shadow.camera.right = d;
-    this.sunLight.shadow.camera.top = d;
-    this.sunLight.shadow.camera.bottom = -d;
+    this.sunLight.shadow.camera.left = -shadowHalf;
+    this.sunLight.shadow.camera.right = shadowHalf;
+    this.sunLight.shadow.camera.top = shadowHalf;
+    this.sunLight.shadow.camera.bottom = -shadowHalf;
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 280;
+    this.sunLight.shadow.camera.far = Math.max(280, this.worldSize * 2.2);
     this.sunLight.shadow.bias = -0.0005;
     this.sunLight.shadow.normalBias = 0.04;
     this.scene.add(this.sunLight);
@@ -153,7 +158,7 @@ export class GameRenderer {
     this.terrain = createTerrainVisuals(world.map);
     this.scene.add(this.terrain.group);
 
-    this.vfx = new VFXManager(theme.dustHex);
+    this.vfx = new VFXManager(theme.dustHex, this.worldSize);
     this.scene.add(this.vfx.group);
 
     this.scene.add(this.placementGroup);
@@ -275,12 +280,13 @@ export class GameRenderer {
     const sin = Math.sin(this.camYaw);
     const dx = rightDelta * cos - forwardDelta * sin;
     const dz = rightDelta * sin + forwardDelta * cos;
-    this.camTarget.x = Math.max(8, Math.min(WORLD_SIZE - 8, this.camTarget.x + dx));
-    this.camTarget.z = Math.max(8, Math.min(WORLD_SIZE - 8, this.camTarget.z + dz));
+    this.camTarget.x = Math.max(8, Math.min(this.worldSize - 8, this.camTarget.x + dx));
+    this.camTarget.z = Math.max(8, Math.min(this.worldSize - 8, this.camTarget.z + dz));
   }
 
   zoomCamera(delta: number): void {
-    this.camDistance = Math.max(18, Math.min(72, this.camDistance + delta));
+    const maxZoom = Math.max(72, this.worldSize * 0.45);
+    this.camDistance = Math.max(18, Math.min(maxZoom, this.camDistance + delta));
   }
 
   rotateCamera(deltaYaw: number): void {
@@ -288,8 +294,8 @@ export class GameRenderer {
   }
 
   setCameraTargetWorld(wx: number, wz: number): void {
-    this.camTarget.x = Math.max(8, Math.min(WORLD_SIZE - 8, wx));
-    this.camTarget.z = Math.max(8, Math.min(WORLD_SIZE - 8, wz));
+    this.camTarget.x = Math.max(8, Math.min(this.worldSize - 8, wx));
+    this.camTarget.z = Math.max(8, Math.min(this.worldSize - 8, wz));
   }
 
   getCameraGroundCorners(): Vec2[] {
@@ -1173,10 +1179,25 @@ export class GameRenderer {
     for (const m of this.falloutMeshes.values()) this.scene.remove(m);
     this.falloutMeshes.clear();
 
-    // Update lighting, atmosphere & PMREM IBL to match selected map theme
+    // Update lighting, atmosphere, shadow bounds & PMREM IBL to match map theme & size
+    this.worldSize = world.map.worldSize;
+    this.camera.far = Math.max(380, this.worldSize * 2.8);
+    this.camera.updateProjectionMatrix();
+
+    const halfW = this.worldSize * 0.5;
+    const shadowHalf = Math.max(88, this.worldSize * 0.62);
+    this.sunLight.position.set(halfW + 45, Math.max(92, this.worldSize * 0.65), halfW + 46);
+    this.sunLight.target.position.set(halfW, 0, halfW);
+    this.sunLight.shadow.camera.left = -shadowHalf;
+    this.sunLight.shadow.camera.right = shadowHalf;
+    this.sunLight.shadow.camera.top = shadowHalf;
+    this.sunLight.shadow.camera.bottom = -shadowHalf;
+    this.sunLight.shadow.camera.far = Math.max(280, this.worldSize * 2.2);
+    this.sunLight.shadow.camera.updateProjectionMatrix();
+
     const theme = world.map.theme;
     this.scene.background = new THREE.Color(theme.fogHex);
-    this.scene.fog = new THREE.FogExp2(theme.fogHex, 0.0044);
+    this.scene.fog = new THREE.FogExp2(theme.fogHex, Math.max(0.0022, 0.0044 * (144 / this.worldSize)));
     if (this.envTexture) this.envTexture.dispose();
     this.envTexture = createEnvironmentIBL(this.renderer, theme);
     this.scene.environment = this.envTexture;
@@ -1185,6 +1206,7 @@ export class GameRenderer {
     this.sunLight.color.setHex(theme.sunHex);
     this.sunLight.intensity = theme.sunIntensity;
     this.vfx.setDustColor(theme.dustHex);
+    this.vfx.setWorldSize(this.worldSize);
 
     this.scene.remove(this.terrain.group);
     this.terrain.dispose();

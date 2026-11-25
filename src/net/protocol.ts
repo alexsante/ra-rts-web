@@ -33,6 +33,7 @@ export type GameCommand =
 
 export interface WorldSnapshot {
   mapPreset: MapPreset;
+  mapSize: number;
   simTime: number;
   tickCount: number;
   winner: Faction | null;

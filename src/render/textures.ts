@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MAP_SIZE, TILE_SIZE, WORLD_SIZE } from '../sim/config';
+import { TILE_SIZE } from '../sim/config';
 import { sampleTerrainHeight } from '../sim/mapGen';
 import { Faction, MapData, UnitType } from '../sim/types';
 
@@ -20,16 +20,18 @@ export function createTerrainAlbedoTexture(map: MapData): THREE.CanvasTexture {
   const img = ctx.createImageData(res, res);
   const data = img.data;
   const preset = map.preset;
+  const mapSize = map.size;
+  const worldSize = map.worldSize;
 
   for (let py = 0; py < res; py++) {
-    const wz = (py / res) * WORLD_SIZE;
-    const gz = Math.min(MAP_SIZE - 1, Math.floor(wz / TILE_SIZE));
+    const wz = (py / res) * worldSize;
+    const gz = Math.min(mapSize - 1, Math.floor(wz / TILE_SIZE));
     for (let px = 0; px < res; px++) {
-      const wx = (px / res) * WORLD_SIZE;
-      const gx = Math.min(MAP_SIZE - 1, Math.floor(wx / TILE_SIZE));
+      const wx = (px / res) * worldSize;
+      const gx = Math.min(mapSize - 1, Math.floor(wx / TILE_SIZE));
       const h = sampleTerrainHeight(map, wx, wz);
-      const hRight = sampleTerrainHeight(map, Math.min(WORLD_SIZE - 0.1, wx + 0.6), wz);
-      const hDown = sampleTerrainHeight(map, wx, Math.min(WORLD_SIZE - 0.1, wz + 0.6));
+      const hRight = sampleTerrainHeight(map, Math.min(worldSize - 0.1, wx + 0.6), wz);
+      const hDown = sampleTerrainHeight(map, wx, Math.min(worldSize - 0.1, wz + 0.6));
       const slope = Math.hypot(hRight - h, hDown - h) / 0.6;
 
       const grain = (hash(px, py) - 0.5) * 14;
@@ -95,7 +97,7 @@ export function createTerrainAlbedoTexture(map: MapData): THREE.CanvasTexture {
       }
 
       // Road asphalt blending
-      const road = map.roadMask[gz * MAP_SIZE + gx];
+      const road = map.roadMask[gz * mapSize + gx];
       if (road > 0.05) {
         const dustNoise = (hash(px * 0.5, py * 0.5) - 0.5) * 16;
         const ar = (preset === 'arctic' ? 76 : 62) + dustNoise;
@@ -107,8 +109,8 @@ export function createTerrainAlbedoTexture(map: MapData): THREE.CanvasTexture {
         b = b * (1 - asphalt) + ab * asphalt;
       }
 
-      if (map.ore[gz * MAP_SIZE + gx] > 0) {
-        const gem = map.isGem[gz * MAP_SIZE + gx] > 0;
+      if (map.ore[gz * mapSize + gx] > 0) {
+        const gem = map.isGem[gz * mapSize + gx] > 0;
         r = r * 0.78 + (gem ? 165 : 185) * 0.22;
         g = g * 0.78 + (gem ? 80 : 140) * 0.22;
         b = b * 0.78 + (gem ? 100 : 50) * 0.22;
@@ -126,16 +128,18 @@ export function createTerrainAlbedoTexture(map: MapData): THREE.CanvasTexture {
   // Paint weathered asphalt highway ribbon + dashed yellow centerline
   ctx.save();
   const toPx = (wx: number, wz: number): [number, number] => [
-    (wx / WORLD_SIZE) * res,
-    (wz / WORLD_SIZE) * res,
+    (wx / worldSize) * res,
+    (wz / worldSize) * res,
   ];
-  const waveAmp = preset === 'arctic' ? 16.0 : preset === 'volcanic' ? 6.0 : 11.0;
+  const scale = worldSize / 144;
+  const waveAmp = (preset === 'arctic' ? 16.0 : preset === 'volcanic' ? 6.0 : 11.0) * scale;
   const waveFreq = preset === 'arctic' ? 1.5 : 2.0;
   const pts: Array<[number, number]> = [];
-  for (let i = 0; i <= 64; i++) {
-    const t = i / 64;
-    const baseX = 24 + t * (WORLD_SIZE - 48);
-    const baseZ = WORLD_SIZE - 24 - t * (WORLD_SIZE - 48);
+  const segs = Math.max(64, Math.round(64 * scale));
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const baseX = 24 + t * (worldSize - 48);
+    const baseZ = worldSize - 24 - t * (worldSize - 48);
     const wave = Math.sin(t * Math.PI * waveFreq) * waveAmp;
     pts.push(toPx(baseX + wave * 0.707, baseZ + wave * 0.707));
   }
@@ -143,17 +147,17 @@ export function createTerrainAlbedoTexture(map: MapData): THREE.CanvasTexture {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = preset === 'arctic' ? 'rgba(62, 68, 78, 0.85)' : 'rgba(48, 47, 50, 0.88)';
-  ctx.lineWidth = 42;
+  ctx.lineWidth = Math.max(18, 42 / scale);
   ctx.beginPath();
   pts.forEach(([x, y], idx) => (idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.stroke();
 
   ctx.strokeStyle = 'rgba(32, 32, 36, 0.45)';
-  ctx.lineWidth = 22;
+  ctx.lineWidth = Math.max(10, 22 / scale);
   ctx.stroke();
 
   ctx.strokeStyle = preset === 'volcanic' ? 'rgba(245, 148, 62, 0.72)' : 'rgba(232, 186, 78, 0.78)';
-  ctx.lineWidth = 2.6;
+  ctx.lineWidth = Math.max(1.5, 2.6 / scale);
   ctx.setLineDash([12, 14]);
   ctx.beginPath();
   pts.forEach(([x, y], idx) => (idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));

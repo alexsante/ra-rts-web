@@ -108,6 +108,7 @@ function falloutChanged(a: FalloutZone[], b: FalloutZone[]): boolean {
 export class SnapshotDeltaEncoder {
   private seq = 0;
   private lastMapPreset: string | null = null;
+  private lastMapSize = 0;
   private lastBuildings = new Map<number, BuildingEntity>();
   private lastUnits = new Map<number, UnitEntity>();
   private lastOre = new Map<number, number>();
@@ -117,6 +118,7 @@ export class SnapshotDeltaEncoder {
 
   reset(): void {
     this.lastMapPreset = null;
+    this.lastMapSize = 0;
     this.lastBuildings.clear();
     this.lastUnits.clear();
     this.lastOre.clear();
@@ -129,7 +131,11 @@ export class SnapshotDeltaEncoder {
     const prevSeq = this.seq;
     this.seq++;
 
-    const sendFull = forceFull || this.lastMapPreset === null || this.lastMapPreset !== snap.mapPreset;
+    const sendFull =
+      forceFull ||
+      this.lastMapPreset === null ||
+      this.lastMapPreset !== snap.mapPreset ||
+      this.lastMapSize !== snap.mapSize;
 
     if (sendFull) {
       this.storeBaseline(snap);
@@ -205,6 +211,7 @@ export class SnapshotDeltaEncoder {
 
   private storeBaseline(snap: WorldSnapshot): void {
     this.lastMapPreset = snap.mapPreset;
+    this.lastMapSize = snap.mapSize;
     this.lastBuildings.clear();
     for (const b of snap.buildings) {
       this.lastBuildings.set(b.id, {
@@ -233,6 +240,7 @@ export class SnapshotDeltaEncoder {
 export class SnapshotDeltaDecoder {
   private lastSeq = 0;
   private mapPreset: WorldSnapshot['mapPreset'] | null = null;
+  private mapSize = 72;
   private buildings = new Map<number, BuildingEntity>();
   private units = new Map<number, UnitEntity>();
   private ore = new Map<number, number>();
@@ -243,6 +251,7 @@ export class SnapshotDeltaDecoder {
   reset(): void {
     this.lastSeq = 0;
     this.mapPreset = null;
+    this.mapSize = 72;
     this.buildings.clear();
     this.units.clear();
     this.ore.clear();
@@ -256,6 +265,7 @@ export class SnapshotDeltaDecoder {
       const full = packet.full;
       this.lastSeq = packet.seq;
       this.mapPreset = full.mapPreset;
+      this.mapSize = full.mapSize;
       this.buildings.clear();
       for (const b of full.buildings) this.buildings.set(b.id, b);
       this.units.clear();
@@ -289,6 +299,7 @@ export class SnapshotDeltaDecoder {
 
     const snapshot: WorldSnapshot = {
       mapPreset: this.mapPreset,
+      mapSize: this.mapSize,
       simTime: delta.simTime,
       tickCount: delta.tickCount,
       winner: delta.winner,
