@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assetModels } from '../assets/modelLoader';
 import { BUILDING_SPECS, TILE_SIZE } from '../sim/config';
 import { BuildingType, Faction } from '../sim/types';
 import {
@@ -185,6 +186,16 @@ export function createBuildingMesh(type: BuildingType, faction: Faction): Buildi
   let secondaryAnimatedPart: THREE.Object3D | undefined;
   let siloDoors: [THREE.Object3D, THREE.Object3D] | undefined;
   let glowMat: THREE.MeshStandardMaterial | undefined;
+
+  // Check optional external `.glb` override first!
+  const customGlb = assetModels.instantiate(type, faction, Math.max(padW, padD) * 0.88);
+  if (customGlb) {
+    customGlb.root.position.y = 0.3;
+    body.add(customGlb.root);
+    turret = customGlb.turret;
+    enableShadows(body);
+    return { root, body, turret };
+  }
 
   if (type === 'conyard') {
     // Stepped armored fabrication hall
@@ -509,6 +520,119 @@ export function createBuildingMesh(type: BuildingType, faction: Faction): Buildi
 
     body.add(tGroup);
     turret = tGroup;
+  } else if (type === 'prism') {
+    // ALLIED PRISM TOWER — Sleek futuristic high-tech spire with chrome mirrors & floating prism crystal!
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      color: 0xe6eef6,
+      roughness: 0.28,
+      metalness: 0.42,
+    });
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 1.05, 0.85, 8), ceramicMat);
+    plinth.position.y = 0.7;
+    body.add(plinth);
+    const blueCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 0.9, 0.24, 8), p.teamMat);
+    blueCollar.position.y = 1.15;
+    body.add(blueCollar);
+
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.56, 2.55, 8), ceramicMat);
+    spire.position.y = 2.45;
+    body.add(spire);
+
+    // 4 angled mirror-chrome reflector struts & lens petals around the summit
+    for (let k = 0; k < 4; k++) {
+      const ang = (k / 4) * Math.PI * 2;
+      const fin = new THREE.Mesh(createBeveledBox(0.16, 1.85, 0.34, 0.03), p.teamMat);
+      fin.position.set(Math.cos(ang) * 0.52, 2.2, Math.sin(ang) * 0.52);
+      fin.rotation.y = -ang;
+      fin.rotation.z = 0.14;
+      body.add(fin);
+
+      const mirror = new THREE.Mesh(createBeveledBox(0.08, 0.82, 0.36, 0.02), p.chromeMat);
+      mirror.position.set(Math.cos(ang) * 0.48, 4.18, Math.sin(ang) * 0.48);
+      mirror.rotation.y = -ang;
+      mirror.rotation.z = -0.28;
+      body.add(mirror);
+    }
+
+    // Floating faceted photonic crystal core!
+    glowMat = new THREE.MeshStandardMaterial({
+      color: 0xdcfbff,
+      emissive: 0x38e8ff,
+      emissiveIntensity: 2.6,
+      roughness: 0.08,
+      metalness: 0.2,
+    });
+    const crystalGroup = new THREE.Group();
+    crystalGroup.position.y = 4.35;
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), glowMat);
+    crystal.scale.set(0.85, 1.35, 0.85);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 8, 22), p.chromeMat);
+    ring.rotation.x = Math.PI / 2;
+    crystalGroup.add(crystal, ring);
+    body.add(crystalGroup);
+    animatedPart = crystalGroup;
+  } else if (type === 'chronosphere') {
+    // ALLIED CHRONOSPHERE — Iconic spacetime accelerator with twin counter-rotating rings & Chrono Orb!
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      color: 0xdde7f2,
+      roughness: 0.3,
+      metalness: 0.45,
+    });
+    const deck = new THREE.Mesh(new THREE.CylinderGeometry(1.88, 2.08, 0.68, 8), ceramicMat);
+    deck.position.y = 0.62;
+    body.add(deck);
+
+    const teamTrim = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.85, 0.24, 16), p.teamMat);
+    teamTrim.position.y = 1.04;
+    body.add(teamTrim);
+
+    glowMat = new THREE.MeshStandardMaterial({
+      color: 0x99f6ff,
+      emissive: 0x22d3ee,
+      emissiveIntensity: 2.5,
+      roughness: 0.1,
+      metalness: 0.2,
+    });
+    const floorConduit = new THREE.Mesh(new THREE.TorusGeometry(1.38, 0.08, 8, 28), glowMat);
+    floorConduit.rotation.x = Math.PI / 2;
+    floorConduit.position.y = 1.18;
+    body.add(floorConduit);
+
+    // 4 perimeter capacitor pylons leaning inward
+    for (let k = 0; k < 4; k++) {
+      const ang = (k / 4) * Math.PI * 2 + Math.PI * 0.25;
+      const pylon = new THREE.Mesh(createBeveledBox(0.38, 2.15, 0.38, 0.04), p.darkSteelMat);
+      pylon.position.set(Math.cos(ang) * 1.56, 1.85, Math.sin(ang) * 1.56);
+      pylon.rotation.y = -ang;
+      pylon.rotation.z = 0.18;
+      body.add(pylon);
+
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10), glowMat);
+      cap.position.set(Math.cos(ang) * 1.38, 2.92, Math.sin(ang) * 1.38);
+      body.add(cap);
+    }
+
+    // Central levitating Chrono Orb
+    const coreOrb = new THREE.Mesh(new THREE.SphereGeometry(0.66, 18, 16), glowMat);
+    coreOrb.position.y = 2.65;
+    body.add(coreOrb);
+
+    // Outer & Inner counter-rotating spacetime copper/chrome accelerator rings!
+    const outerRing = new THREE.Group();
+    outerRing.position.y = 2.65;
+    const outerTorus = new THREE.Mesh(new THREE.TorusGeometry(1.36, 0.11, 10, 28), p.copperMat);
+    outerTorus.rotation.x = Math.PI * 0.34;
+    outerRing.add(outerTorus);
+    body.add(outerRing);
+    animatedPart = outerRing;
+
+    const innerRing = new THREE.Group();
+    innerRing.position.y = 2.65;
+    const innerTorus = new THREE.Mesh(new THREE.TorusGeometry(1.02, 0.09, 10, 24), p.chromeMat);
+    innerTorus.rotation.z = Math.PI * 0.34;
+    innerRing.add(innerTorus);
+    body.add(innerRing);
+    secondaryAnimatedPart = innerRing;
   } else if (type === 'tesla') {
     // Octagonal reinforced high-voltage pedestal + 4 steel buttress legs
     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.76, 1.02, 0.95, 8), p.darkSteelMat);

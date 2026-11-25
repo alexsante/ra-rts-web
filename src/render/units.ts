@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assetModels } from '../assets/modelLoader';
 import { Faction, UnitType } from '../sim/types';
 import {
   FactionPalette,
@@ -19,6 +20,7 @@ export interface UnitMeshHandle {
   root: THREE.Group;
   hull: THREE.Group;
   turret?: THREE.Object3D;
+  turretRelativeToHull?: boolean;
   barrel?: THREE.Object3D;
   cargoPile?: THREE.Mesh;
   oreDrum?: THREE.Object3D;
@@ -199,6 +201,7 @@ export function createUnitMesh(type: UnitType, faction: Faction): UnitMeshHandle
   const p = getFactionPalette(faction);
 
   let turret: THREE.Object3D | undefined;
+  let turretRelativeToHull = false;
   let barrel: THREE.Object3D | undefined;
   let cargoPile: THREE.Mesh | undefined;
   let oreDrum: THREE.Object3D | undefined;
@@ -210,7 +213,30 @@ export function createUnitMesh(type: UnitType, faction: Faction): UnitMeshHandle
   let ringRadius = 1.35;
   let barHeight = 2.6;
 
-  if (type === 'medium_tank') {
+  // Check optional external `.glb` override first!
+  const targetSpan =
+    type === 'kirov'
+      ? 6.4
+      : type === 'mammoth_tank'
+      ? 3.2
+      : type === 'rifle' || type === 'rocket' || type === 'tesla_trooper'
+      ? 1.5
+      : 2.5;
+  const customGlb = assetModels.instantiate(type, faction, targetSpan);
+  if (customGlb) {
+    ringRadius = type === 'kirov' ? 2.2 : type === 'mammoth_tank' ? 1.92 : 1.45;
+    barHeight = type === 'kirov' ? 10.9 : type === 'mammoth_tank' ? 3.25 : 2.6;
+    const ao = createContactShadow(ringRadius * 1.7, ringRadius * 2.0, 0.7);
+    ao.userData.noShadow = true;
+    hull.add(ao);
+    if (type === 'kirov') {
+      customGlb.root.position.y = 7.2;
+    }
+    hull.add(customGlb.root);
+    turret = customGlb.turret;
+    turretRelativeToHull = !!turret;
+    barrel = customGlb.barrel;
+  } else if (type === 'medium_tank') {
     ringRadius = 1.5;
     barHeight = 2.45;
 
@@ -271,6 +297,152 @@ export function createUnitMesh(type: UnitType, faction: Faction): UnitMeshHandle
     const bGroup = new THREE.Group();
     bGroup.position.set(0, 0.04, 0.62);
     bGroup.add(buildCannonBarrel(p, 1.55, 0.075));
+    tGroup.add(bGroup);
+
+    root.add(tGroup);
+    turret = tGroup;
+    barrel = bGroup;
+  } else if (type === 'prism_tank') {
+    // ALLIED PRISM TANK — Sleek high-tech tracked chassis + rotating parabolic mirror emitter & crystal prism!
+    ringRadius = 1.52;
+    barHeight = 2.75;
+
+    const ao = createContactShadow(2.3, 2.95, 0.72);
+    ao.userData.noShadow = true;
+    hull.add(ao);
+
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      color: 0xe6eef6,
+      roughness: 0.3,
+      metalness: 0.4,
+    });
+    const prismGlow = new THREE.MeshStandardMaterial({
+      color: 0xdcfbff,
+      emissive: 0x38e8ff,
+      emissiveIntensity: 2.5,
+      roughness: 0.08,
+      metalness: 0.15,
+    });
+
+    for (const sx of [-0.74, 0.74]) {
+      const pod = buildTrackPod(p, 0.34, 0.46, 2.32, 5);
+      pod.position.set(sx, 0.26, 0);
+      hull.add(pod);
+    }
+
+    const chassis = new THREE.Mesh(
+      createSlopedHullGeometry(1.22, 0.5, 2.26, 0.48, 0.22, 0.05),
+      ceramicMat
+    );
+    chassis.position.set(0, 0.54, 0);
+    hull.add(chassis);
+
+    const trim = new THREE.Mesh(createBeveledBox(1.26, 0.14, 1.5, 0.03), p.teamMat);
+    trim.position.set(0, 0.8, 0.05);
+    hull.add(trim);
+
+    // Rear glowing cyan laser capacitor battery cells
+    for (const sx of [-0.32, 0, 0.32]) {
+      const cell = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.52, 8), prismGlow);
+      cell.rotation.x = Math.PI / 2;
+      cell.position.set(sx, 0.86, -0.78);
+      hull.add(cell);
+    }
+
+    // Elevated rotating Prism Mirror Emitter Turret!
+    const tGroup = new THREE.Group();
+    tGroup.position.set(0, 1.05, 0.02);
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.56, 0.32, 10), p.darkSteelMat);
+    tGroup.add(pedestal);
+    const yoke = new THREE.Mesh(createBeveledBox(0.76, 0.44, 0.65, 0.05), p.teamMat);
+    yoke.position.set(0, 0.32, -0.05);
+    tGroup.add(yoke);
+
+    const bGroup = new THREE.Group();
+    bGroup.position.set(0, 0.56, 0.28);
+    // Chrome parabolic mirror reflector bowl
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.54, 0.18, 0.32, 14), p.chromeMat);
+    dish.rotation.x = Math.PI / 2;
+    bGroup.add(dish);
+    // Glowing diamond prism emitter lens in front of mirror
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 0), prismGlow);
+    crystal.position.set(0, 0, 0.38);
+    bGroup.add(crystal);
+    // 3 focus struts supporting the crystal
+    for (let k = 0; k < 3; k++) {
+      const ang = (k / 3) * Math.PI * 2;
+      const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.52, 5), p.darkSteelMat);
+      strut.rotation.x = Math.PI / 2;
+      strut.position.set(Math.cos(ang) * 0.28, Math.sin(ang) * 0.28, 0.2);
+      bGroup.add(strut);
+    }
+    tGroup.add(bGroup);
+
+    root.add(tGroup);
+    turret = tGroup;
+    barrel = bGroup;
+  } else if (type === 'chrono_tank') {
+    // ALLIED CHRONO TANK — Sleek hover-skirted phase-blink raider with twin chrono coils & missile pods!
+    ringRadius = 1.48;
+    barHeight = 2.55;
+
+    const ao = createContactShadow(2.4, 2.9, 0.64);
+    ao.userData.noShadow = true;
+    hull.add(ao);
+
+    const chronoGlow = new THREE.MeshStandardMaterial({
+      color: 0x80f6ff,
+      emissive: 0x22d3ee,
+      emissiveIntensity: 2.6,
+      roughness: 0.1,
+    });
+
+    // Armored hover-skirt perimeter + glowing cyan anti-grav underglow ring
+    const skirt = new THREE.Mesh(createSlopedHullGeometry(1.86, 0.34, 2.48, 0.45, 0.35, 0.06), p.darkSteelMat);
+    skirt.position.set(0, 0.34, 0);
+    hull.add(skirt);
+    const hoverGlow = new THREE.Mesh(new THREE.BoxGeometry(1.74, 0.08, 2.34), chronoGlow);
+    hoverGlow.position.set(0, 0.16, 0);
+    hull.add(hoverGlow);
+
+    // Sleek angled Allied nose chassis
+    const bodyHull = new THREE.Mesh(createSlopedHullGeometry(1.42, 0.46, 2.18, 0.55, 0.25, 0.06), p.teamMat);
+    bodyHull.position.set(0, 0.68, 0.04);
+    hull.add(bodyHull);
+
+    // Twin iconic side-mounted copper/cyan Chrono Phase Coils!
+    for (const sx of [-0.82, 0.82]) {
+      const coilCore = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.82, 12), chronoGlow);
+      coilCore.position.set(sx, 0.82, -0.58);
+      hull.add(coilCore);
+      for (const ry of [0.58, 0.82, 1.06]) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.04, 6, 14), p.copperMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(sx, ry, -0.58);
+        hull.add(ring);
+      }
+    }
+
+    // Low-profile futuristic turret with twin rapid missile pods!
+    const tGroup = new THREE.Group();
+    tGroup.position.set(0, 1.08, 0.15);
+    const head = new THREE.Mesh(createSlopedHullGeometry(0.96, 0.38, 1.15, 0.32, 0.22, 0.05), p.armorMat);
+    tGroup.add(head);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.14, 0.28), p.glassMat);
+    visor.position.set(0, 0.14, 0.46);
+    tGroup.add(visor);
+
+    const bGroup = new THREE.Group();
+    bGroup.position.set(0, 0.06, 0.12);
+    for (const sx of [-0.62, 0.62]) {
+      const pod = new THREE.Mesh(createBeveledBox(0.32, 0.34, 0.86, 0.04), p.darkSteelMat);
+      pod.position.set(sx, 0, 0);
+      bGroup.add(pod);
+      const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.08, 8), chronoGlow);
+      tip.rotation.x = Math.PI / 2;
+      tip.position.set(sx, 0, 0.44);
+      bGroup.add(tip);
+    }
     tGroup.add(bGroup);
 
     root.add(tGroup);
@@ -795,6 +967,7 @@ export function createUnitMesh(type: UnitType, faction: Faction): UnitMeshHandle
     root,
     hull,
     turret,
+    turretRelativeToHull,
     barrel,
     cargoPile,
     oreDrum,

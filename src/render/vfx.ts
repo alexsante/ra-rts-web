@@ -159,9 +159,17 @@ export class VFXManager {
     toX: number,
     toY: number,
     toZ: number,
-    eliteShot = false
+    eliteShot = false,
+    bounceTo?: { x: number; y: number; z: number }
   ): void {
-    const muzzleColor = damageType === 'tesla' ? 0x6ef4ff : eliteShot ? 0xff5a5a : 0xffcc55;
+    const muzzleColor =
+      damageType === 'prism'
+        ? 0xe0fbff
+        : damageType === 'tesla'
+        ? 0x6ef4ff
+        : eliteShot
+        ? 0xff5a5a
+        : 0xffcc55;
     this.spawnSprite(
       fromX,
       fromY,
@@ -170,9 +178,9 @@ export class VFXManager {
       0,
       0,
       muzzleColor,
-      damageType === 'bullet' ? 0.55 : 1.4,
+      damageType === 'bullet' ? 0.55 : damageType === 'prism' ? 1.8 : 1.4,
       0.2,
-      0.1,
+      damageType === 'prism' ? 0.2 : 0.1,
       0,
       0.95,
       true
@@ -191,6 +199,60 @@ export class VFXManager {
       const line = new THREE.Line(geo, mat);
       this.group.add(line);
       this.lines.push({ line, age: 0, maxAge: 0.1 });
+    } else if (damageType === 'prism') {
+      // Blinding white-cyan photonic laser core + refracted outer halo!
+      const drawBeam = (
+        x1: number,
+        y1: number,
+        z1: number,
+        x2: number,
+        y2: number,
+        z2: number,
+        coreColor: number,
+        haloColor: number,
+        duration: number
+      ) => {
+        for (let pass = 0; pass < 2; pass++) {
+          const off = pass === 0 ? 0 : 0.08;
+          const geo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(x1, y1 + off, z1),
+            new THREE.Vector3(x2, y2 + off, z2),
+          ]);
+          const mat = new THREE.LineBasicMaterial({
+            color: pass === 0 ? coreColor : haloColor,
+            transparent: true,
+            opacity: pass === 0 ? 1.0 : 0.85,
+          });
+          const line = new THREE.Line(geo, mat);
+          this.group.add(line);
+          this.lines.push({ line, age: 0, maxAge: duration });
+        }
+      };
+
+      drawBeam(fromX, fromY, fromZ, toX, toY, toZ, 0xffffff, eliteShot ? 0x60a5fa : 0x38e8ff, 0.34);
+      this.spawnFlashLight(fromX, fromY, fromZ, 0x9cf7ff, 8, 16, 0.24);
+      this.spawnFlashLight(toX, toY, toZ, 0x38e8ff, 10, 18, 0.3);
+
+      // Secondary refracted Prism bounce beam!
+      if (bounceTo) {
+        drawBeam(toX, toY, toZ, bounceTo.x, bounceTo.y, bounceTo.z, 0xe0faff, 0x38bdf8, 0.3);
+        this.spawnSprite(
+          bounceTo.x,
+          bounceTo.y + 0.2,
+          bounceTo.z,
+          0,
+          0.4,
+          0,
+          0x80f6ff,
+          1.4,
+          2.6,
+          0.26,
+          0,
+          0.95,
+          true
+        );
+        this.spawnFlashLight(bounceTo.x, bounceTo.y, bounceTo.z, 0x38e8ff, 7, 14, 0.24);
+      }
     } else if (damageType === 'tesla') {
       for (let strand = 0; strand < 2; strand++) {
         const segs = 12;
@@ -235,10 +297,10 @@ export class VFXManager {
   ): void {
     if (shake > 0) this.addShake(shake);
 
-    const isTesla = damageType === 'tesla';
-    const flashColor = isTesla ? 0x4aeaff : 0xff922b;
+    const isEnergy = damageType === 'tesla' || damageType === 'prism';
+    const flashColor = damageType === 'prism' ? 0x8ef9ff : isEnergy ? 0x4aeaff : 0xff922b;
 
-    this.spawnSprite(x, y + 0.3, z, 0, 0.6, 0, isTesla ? 0xc2fcff : 0xfff0b3, scale * 1.1, scale * 2.8, 0.28, 0, 1.0, true);
+    this.spawnSprite(x, y + 0.3, z, 0, 0.6, 0, isEnergy ? 0xe0feff : 0xfff0b3, scale * 1.1, scale * 2.8, 0.28, 0, 1.0, true);
     this.spawnSprite(x, y + 0.4, z, 0, 1.1, 0, flashColor, scale * 0.9, scale * 3.4, 0.48, 0, 0.9, true);
 
     const smokeCount = Math.min(8, Math.max(2, Math.round(scale * 3)));
@@ -250,7 +312,7 @@ export class VFXManager {
         (Math.random() - 0.5) * 1.4,
         1.6 + Math.random() * 1.8,
         (Math.random() - 0.5) * 1.4,
-        isTesla ? 0x62808f : 0x332f2c,
+        isEnergy ? 0x62808f : 0x332f2c,
         scale * 0.7,
         scale * 2.9,
         0.95 + Math.random() * 0.6,
@@ -271,7 +333,7 @@ export class VFXManager {
         Math.cos(ang) * spd,
         3.2 + Math.random() * 4.5,
         Math.sin(ang) * spd,
-        isTesla ? 0x7ef7ff : 0xffc145,
+        isEnergy ? 0x7ef7ff : 0xffc145,
         0.38,
         0.08,
         0.45 + Math.random() * 0.35,
@@ -282,7 +344,7 @@ export class VFXManager {
     }
 
     const swMat = new THREE.MeshBasicMaterial({
-      color: isTesla ? 0x52ebff : 0xffb347,
+      color: isEnergy ? 0x52ebff : 0xffb347,
       transparent: true,
       opacity: 0.75,
       side: THREE.DoubleSide,
@@ -449,6 +511,95 @@ export class VFXManager {
         true
       );
     }
+  }
+
+  /**
+   * Allied Chronosphere & Chrono Tank Phase-Blink spacetime rift vortex at origin + destination!
+   */
+  spawnChronoWarp(
+    fromX: number,
+    fromY: number,
+    fromZ: number,
+    toX: number,
+    toY: number,
+    toZ: number,
+    count = 1
+  ): void {
+    const scale = count > 1 ? 2.4 : 1.15;
+    this.addShake(count > 1 ? 0.45 : 0.14);
+
+    const burstAt = (x: number, y: number, z: number) => {
+      this.spawnFlashLight(x, y + 1.8, z, 0x38e8ff, 14 * scale, 26, 0.55);
+      this.spawnSprite(x, y + 1.0, z, 0, 0.8, 0, 0xe0feff, scale * 2.2, scale * 4.6, 0.42, 0, 1.0, true);
+
+      for (let r = 0; r < 2; r++) {
+        const swMat = new THREE.MeshBasicMaterial({
+          color: r === 0 ? 0xffffff : 0x38e8ff,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const sw = new THREE.Mesh(this.ringGeo, swMat);
+        sw.position.set(x, y + 0.25 + r * 0.25, z);
+        this.group.add(sw);
+        this.shockwaves.push({
+          mesh: sw,
+          age: 0,
+          maxAge: 0.55 + r * 0.22,
+          maxScale: scale * (4.2 + r * 2.4),
+        });
+      }
+
+      const sparks = count > 1 ? 18 : 10;
+      for (let i = 0; i < sparks; i++) {
+        const ang = (i / sparks) * Math.PI * 2;
+        const rad = 0.8 + Math.random() * scale * 1.4;
+        this.spawnSprite(
+          x + Math.cos(ang) * rad,
+          y + 0.3,
+          z + Math.sin(ang) * rad,
+          Math.cos(ang) * 1.8,
+          3.8 + Math.random() * 2.8,
+          Math.sin(ang) * 1.8,
+          i % 2 === 0 ? 0x67e8f9 : 0xffffff,
+          0.55,
+          0.1,
+          0.65,
+          1.2,
+          0.95,
+          true
+        );
+      }
+    };
+
+    burstAt(fromX, fromY, fromZ);
+    burstAt(toX, toY, toZ);
+
+    // Fleeting quantum tether arc linking origin and destination
+    const pts: THREE.Vector3[] = [];
+    const segs = 12;
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const arch = Math.sin(t * Math.PI) * (count > 1 ? 5.5 : 2.2);
+      pts.push(
+        new THREE.Vector3(
+          fromX + (toX - fromX) * t,
+          fromY + (toY - fromY) * t + 1.0 + arch,
+          fromZ + (toZ - fromZ) * t
+        )
+      );
+    }
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const line = new THREE.Line(lineGeo, lineMat);
+    this.group.add(line);
+    this.lines.push({ line, age: 0, maxAge: 0.55 });
   }
 
   spawnVeterancyBurst(x: number, y: number, z: number): void {

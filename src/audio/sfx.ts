@@ -1,3 +1,4 @@
+import { audioPack, type AudioCueKey } from '../assets/audioPack';
 import { DamageType, Faction, SimEvent } from '../sim/types';
 
 /**
@@ -140,6 +141,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'click', 0.45)) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -157,6 +159,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'order', 0.45)) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -174,6 +177,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'build_placed', 0.55)) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -195,7 +199,37 @@ export class SoundEngine {
     if (now - this.lastShotTime < 0.045) return;
     this.lastShotTime = now;
 
-    if (damageType === 'tesla') {
+    const cueMap: Partial<Record<DamageType, AudioCueKey>> = {
+      bullet: 'shot_bullet',
+      shell: 'shot_shell',
+      rocket: 'shot_rocket',
+      tesla: 'shot_tesla',
+      prism: 'shot_prism',
+    };
+    const cue = cueMap[damageType];
+    if (cue && audioPack.playIfAvailable(ctx, cue, 0.5)) return;
+
+    if (damageType === 'prism') {
+      // Allied Prism photonic laser zap — crystalline harmonic downward chirp!
+      const osc = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc2.type = 'triangle';
+      osc.frequency.setValueAtTime(1850, now);
+      osc.frequency.exponentialRampToValueAtTime(460, now + 0.22);
+      osc2.frequency.setValueAtTime(2780, now);
+      osc2.frequency.exponentialRampToValueAtTime(720, now + 0.18);
+      g.gain.setValueAtTime(0.14, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      osc.connect(g);
+      osc2.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc2.start(now);
+      osc.stop(now + 0.25);
+      osc2.stop(now + 0.25);
+    } else if (damageType === 'tesla') {
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
       osc.type = 'sawtooth';
@@ -250,7 +284,9 @@ export class SoundEngine {
   playExplosion(scale: number): void {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
-    if (!ctx || !this.noiseBuffer) return;
+    if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'explosion', Math.min(0.75, 0.3 + scale * 0.15))) return;
+    if (!this.noiseBuffer) return;
     const now = ctx.currentTime;
     const dur = Math.min(0.85, 0.2 + scale * 0.16);
 
@@ -273,7 +309,9 @@ export class SoundEngine {
   playJetFlyby(): void {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
-    if (!ctx || !this.noiseBuffer) return;
+    if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'airstrike', 0.6)) return;
+    if (!this.noiseBuffer) return;
     const now = ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
@@ -295,6 +333,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'nuke_siren', 0.65)) return;
     const now = ctx.currentTime;
     for (let i = 0; i < 3; i++) {
       const osc = ctx.createOscillator();
@@ -315,7 +354,9 @@ export class SoundEngine {
   playNukeDetonation(): void {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
-    if (!ctx || !this.noiseBuffer) return;
+    if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'nuke_detonation', 0.75)) return;
+    if (!this.noiseBuffer) return;
     const now = ctx.currentTime;
 
     // Massive sub-bass boom + prolonged thunderous roar
@@ -345,10 +386,33 @@ export class SoundEngine {
     src.stop(now + 2.3);
   }
 
+  playChronoWarp(): void {
+    if (!this.enabled) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'chrono_warp', 0.6)) return;
+    const now = ctx.currentTime;
+    // Shimmering spacetime phase-shift sweep + glassy chime
+    [320, 640, 1280].forEach((base, idx) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = idx === 0 ? 'sine' : 'triangle';
+      osc.frequency.setValueAtTime(base, now);
+      osc.frequency.exponentialRampToValueAtTime(base * 2.4, now + 0.28);
+      osc.frequency.exponentialRampToValueAtTime(base * 0.75, now + 0.62);
+      g.gain.setValueAtTime(0.085, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.68);
+    });
+  }
+
   playIronCurtain(): void {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'iron_curtain', 0.6)) return;
     const now = ctx.currentTime;
     [110, 165, 220].forEach((freq) => {
       const osc = ctx.createOscillator();
@@ -368,6 +432,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'fanfare', 0.5)) return;
     const now = ctx.currentTime;
     [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
       const osc = ctx.createOscillator();
@@ -386,6 +451,7 @@ export class SoundEngine {
     if (!this.enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (audioPack.playIfAvailable(ctx, 'cash', 0.45)) return;
     const now = ctx.currentTime;
     [880, 1175].forEach((freq, i) => {
       const osc = ctx.createOscillator();
@@ -439,6 +505,8 @@ export class SoundEngine {
         this.playNukeDetonation();
       } else if (ev.type === 'iron_curtain_cast') {
         this.playIronCurtain();
+      } else if (ev.type === 'chrono_warp') {
+        this.playChronoWarp();
       } else if (ev.type === 'eva' && ev.faction === localFaction) {
         if (
           ev.code === 'construction_complete' ||
@@ -450,7 +518,8 @@ export class SoundEngine {
           ev.code === 'derrick_captured' ||
           ev.code === 'unit_promoted' ||
           ev.code === 'kirov_reporting' ||
-          ev.code === 'iron_curtain'
+          ev.code === 'iron_curtain' ||
+          ev.code === 'chronoshift'
         ) {
           this.speakEva(ev.text);
         }

@@ -1076,5 +1076,255 @@ body {
   border-color: var(--accent-blue);
 }
 
+/* --- FACTION PILL, CHRONOSHIFT, PRE-GAME LOBBY, REPLAY BAR & ASSETS --- */
+
+.faction-pill {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.faction-pill.allies {
+  background: rgba(37, 99, 235, 0.36);
+  border-color: #60a5fa;
+  color: #bfdbfe;
+}
+
+.faction-pill.soviets {
+  background: rgba(220, 38, 38, 0.36);
+  border-color: #f87171;
+  color: #fecaca;
+}
+
+.setup-btn {
+  border-color: var(--accent-amber);
+  color: #fde68a;
+}
+
+.sw-card.hidden {
+  display: none;
+}
+
+.sw-card.chrono {
+  border-left-color: #22d3ee;
+}
+
+.sw-card.chrono.ready {
+  border-color: #38e8ff;
+  box-shadow: 0 0 16px rgba(56, 232, 255, 0.55);
+}
+
+.sw-card.chrono .sw-timer {
+  color: #67e8f9;
+}
+
+/* Replay playback controls bar */
+#replay-bar {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(12, 16, 23, 0.92);
+  border: 1px solid #38e8ff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  pointer-events: auto;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+#replay-bar.hidden {
+  display: none;
+}
+
+.replay-tag {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: #38e8ff;
+}
+
+#replay-scrubber {
+  width: 220px;
+  accent-color: #38e8ff;
+  cursor: pointer;
+}
+
+.replay-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-amber);
+  min-width: 84px;
+  text-align: center;
+}
+
+/* Pre-game Skirmish & 1v1 Lobby Modal */
+.lobby-card {
+  width: min(560px, 94%);
+  border-top-color: var(--accent-amber);
+}
+
+.lobby-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.lobby-tab {
+  background: #0e131a;
+  border: 1px solid #2b3545;
+  border-radius: 4px;
+  color: var(--muted);
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.lobby-tab.active {
+  background: #1f2d42;
+  border-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.lobby-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cfg-field span {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.cfg-field select {
+  width: 100%;
+  padding: 7px 8px;
+}
+
+.cfg-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: #0c1016;
+  border: 1px solid #283242;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.cfg-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.cfg-check input {
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}
+
+.faction-briefing {
+  background: #0c1016;
+  border: 1px solid #283242;
+  border-left: 3px solid var(--accent-blue);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+
+.faction-briefing.soviets {
+  border-left-color: var(--accent-red);
+}
+
+.roster-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.roster-slot {
+  background: #0c1016;
+  border: 1px solid #283242;
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ready-pill {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: #1f2937;
+  color: var(--muted);
+}
+
+.ready-pill.ready {
+  background: rgba(21, 128, 61, 0.35);
+  border: 1px solid var(--accent-green);
+  color: #86efac;
+}
+
+.muted-text {
+  color: var(--muted);
+}
+
+.lobby-action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.file-input {
+  display: none;
+}
+
+.asset-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-override-list {
+  margin-top: 12px;
+  background: #0c1016;
+  border: 1px solid #283242;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #93c5fd;
+  max-height: 92px;
+  overflow-y: auto;
+}
+
+
 
 

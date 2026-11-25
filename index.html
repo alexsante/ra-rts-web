@@ -16,50 +16,61 @@
               <span class="brand-star">★</span>
               <span class="brand-title">RED ALERT</span>
               <span id="map-subtitle" class="brand-sub">CANYON PROTOCOL</span>
+              <span id="faction-pill" class="faction-pill allies">ALLIES</span>
               <span id="match-clock" class="match-clock">00:00</span>
               <span id="empire-telemetry" class="empire-telemetry">ARMY 5 · OIL 0/2 · KILLS 0</span>
             </div>
             <div class="top-controls">
-              <select id="select-map" class="hud-select" title="Select Skirmish Map">
-                <option value="canyon">Map: Canyon</option>
-                <option value="arctic">Map: Arctic</option>
-                <option value="volcanic">Map: Volcanic</option>
-              </select>
-              <select id="select-ai" class="hud-select" title="Skirmish AI Difficulty">
-                <option value="easy">AI: Easy</option>
-                <option value="normal" selected>AI: Normal</option>
-                <option value="brutal">AI: Brutal</option>
-              </select>
-              <button id="btn-mp" class="hud-btn mp-btn" title="Host or Join 1v1 Multiplayer">1v1 Multiplayer</button>
+              <button id="btn-setup" class="hud-btn setup-btn" title="Match Setup & Skirmish Lobby">Setup</button>
+              <button id="btn-mp" class="hud-btn mp-btn" title="Host or Join 1v1 Multiplayer Lobby">1v1 Lobby</button>
+              <button id="btn-replay-open" class="hud-btn" title="Save or Watch Match Replays">Replay</button>
+              <button id="btn-assets-open" class="hud-btn" title="Drop-in .glb Models & Audio Pack">Assets</button>
               <button id="btn-home" class="hud-btn" title="Jump to Base (H / Space)">Base</button>
               <button id="btn-speed" class="hud-btn" title="Toggle Game Speed">1x</button>
               <button id="btn-pause" class="hud-btn" title="Pause / Resume (P)">Pause</button>
               <button id="btn-fog" class="hud-btn active" title="Toggle Fog of War (F)">Fog: ON</button>
-              <button id="btn-music" class="hud-btn" title="Industrial Synth Music">Music: OFF</button>
-              <button id="btn-audio" class="hud-btn active" title="Toggle SFX (M)">SFX: ON</button>
+              <button id="btn-music" class="hud-btn" title="Industrial Synth Music">Music</button>
+              <button id="btn-audio" class="hud-btn active" title="Toggle SFX (M)">SFX</button>
               <button id="btn-help" class="hud-btn" title="Controls & Info (?)">?</button>
             </div>
           </div>
 
           <div id="eva-banner" class="hidden"></div>
 
-          <!-- Left Superweapon Command Dock -->
+          <!-- Replay Playback Controls Bar -->
+          <div id="replay-bar" class="hidden">
+            <span class="replay-tag">● REPLAY</span>
+            <button id="btn-replay-play" class="hud-btn">Pause</button>
+            <button id="btn-replay-speed" class="hud-btn">1x</button>
+            <input id="replay-scrubber" type="range" min="0" max="100" value="0" />
+            <span id="replay-time-label" class="replay-time">00:00 / 00:00</span>
+            <button id="btn-replay-exit" class="hud-btn danger-btn">Exit</button>
+          </div>
+
+          <!-- Left Faction-Specific Superweapon Command Dock -->
           <div id="superweapon-dock">
-            <button id="btn-sw-airstrike" class="sw-card locked" title="Unlocked by Tech Center">
+            <button id="btn-sw-airstrike" class="sw-card locked" title="Allied Tech Center — Twin A-10 Air Strike">
               <div class="sw-icon">✈</div>
               <div class="sw-info">
                 <div class="sw-name">AIR STRIKE</div>
                 <div id="sw-airstrike-time" class="sw-timer">BUILD TECH</div>
               </div>
             </button>
-            <button id="btn-sw-iron" class="sw-card iron locked" title="Unlocked by Tech Center — 10s Invulnerability Shield">
+            <button id="btn-sw-chrono" class="sw-card chrono locked" title="Allied Chronosphere — 2-Click Teleport up to 6 friendly units">
+              <div class="sw-icon">⏳</div>
+              <div class="sw-info">
+                <div class="sw-name">CHRONOSHIFT</div>
+                <div id="sw-chrono-time" class="sw-timer">BUILD CHRONO</div>
+              </div>
+            </button>
+            <button id="btn-sw-iron" class="sw-card iron locked" title="Soviet Tech Center — 10s Invulnerability Shield">
               <div class="sw-icon">🛡</div>
               <div class="sw-info">
                 <div class="sw-name">IRON CURTAIN</div>
                 <div id="sw-iron-time" class="sw-timer">BUILD TECH</div>
               </div>
             </button>
-            <button id="btn-sw-nuke" class="sw-card nuke locked" title="Unlocked by Nuclear Silo">
+            <button id="btn-sw-nuke" class="sw-card nuke locked" title="Soviet Nuclear Silo — Tactical Nuclear Warhead">
               <div class="sw-icon">☢</div>
               <div class="sw-info">
                 <div class="sw-name">TACTICAL NUKE</div>
@@ -93,48 +104,79 @@
           </div>
         </div>
 
-        <div id="help-modal" class="modal hidden">
-          <div class="modal-card">
+        <!-- Unified Pre-Game Skirmish & 1v1 Multiplayer Lobby Modal -->
+        <div id="lobby-modal" class="modal hidden">
+          <div class="modal-card lobby-card">
             <div class="modal-header">
-              <h2>TACTICAL BRIEFING // CONTROLS</h2>
-              <button id="btn-close-help" class="hud-btn">✕</button>
+              <h2>COMMAND CENTER // MATCH LOBBY</h2>
+              <button id="btn-close-lobby" class="hud-btn">✕</button>
             </div>
-            <div class="modal-body">
-              <p class="briefing-lead">
-                Destroy all enemy structures to win! Capture neutral <strong class="amber-text">Tech Oil Derricks</strong> on the flanks for passive income, grab glowing <strong class="amber-text">Bonus Crates</strong>, build a <strong class="blue-text">Tech Center</strong> for V2 Artillery, Tesla Troopers, Mammoth Tanks &amp; Air Strikes, and construct a <strong class="red-text">Nuclear Silo</strong> to end the war!
-              </p>
-              <div class="controls-grid">
-                <div><strong>Left Click / Drag</strong></div><div>Select unit, building, or marquee box</div>
-                <div><strong>Double Click Unit</strong></div><div>Select all matching units on screen</div>
-                <div><strong>Right Click Ground</strong></div><div>Move in tactical formation</div>
-                <div><strong>Right Click Enemy</strong></div><div>Focus fire / Attack target</div>
-                <div><strong>G + Click / Shift+RMB</strong></div><div>Attack-Move (engage enemies along route)</div>
-                <div><strong>X</strong></div><div>Stop selected units</div>
-                <div><strong>R / V</strong></div><div>Toggle Building Repair / Sell cursor mode</div>
-                <div><strong>Ctrl + 1–5 / 1–5</strong></div><div>Assign / recall control groups</div>
-                <div><strong>WASD / Arrows / MMB</strong></div><div>Pan camera</div>
-                <div><strong>Q / E / Scroll</strong></div><div>Rotate camera / Zoom</div>
-                <div><strong>H or Space</strong></div><div>Center on Construction Yard</div>
-                <div><strong>Right Click Sidebar</strong></div><div>Cancel build &amp; refund spent credits</div>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div id="mp-modal" class="modal hidden">
-          <div class="modal-card mp-card">
-            <div class="modal-header">
-              <h2>1v1 MULTIPLAYER // COMMAND LINK</h2>
-              <button id="btn-close-mp" class="hud-btn">✕</button>
+            <div class="lobby-tabs">
+              <button id="tab-lobby-solo" class="lobby-tab active">SOLO SKIRMISH</button>
+              <button id="tab-lobby-mp" class="lobby-tab">1v1 MULTIPLAYER</button>
             </div>
+
             <div id="mp-status-pill" class="mp-status-pill">MODE: SOLO SKIRMISH (VS AI)</div>
             <div id="mp-error" class="mp-error hidden"></div>
 
-            <div id="mp-lobby-idle" class="mp-section">
-              <p class="briefing-lead">
-                Host a 2-player match as <strong class="blue-text">Allies</strong> on the selected map and send the invite link to 1 opponent, who will automatically join as <strong class="red-text">Soviets</strong>.
-              </p>
-              <button id="btn-mp-host" class="primary-btn full-btn">HOST 1v1 MATCH &amp; GET INVITE LINK</button>
+            <!-- Shared Match Configuration Grid -->
+            <div id="lobby-config-grid" class="lobby-config-grid">
+              <label class="cfg-field">
+                <span>THEATER / MAP</span>
+                <select id="cfg-map" class="hud-select">
+                  <option value="canyon">Canyon Protocol (Desert)</option>
+                  <option value="arctic">Arctic Divide (Alpine)</option>
+                  <option value="volcanic">Obsidian Caldera (Volcanic)</option>
+                </select>
+              </label>
+
+              <label class="cfg-field">
+                <span id="cfg-faction-title">YOUR FACTION</span>
+                <select id="cfg-faction" class="hud-select">
+                  <option value="allies">Allies (Prism · Chrono · Air Strike)</option>
+                  <option value="soviets">Soviets (Tesla · Mammoth · Kirov · Nuke)</option>
+                </select>
+              </label>
+
+              <label class="cfg-field">
+                <span>STARTING CREDITS</span>
+                <select id="cfg-credits" class="hud-select">
+                  <option value="3000">$3,000 (Tight Economy)</option>
+                  <option value="5000" selected>$5,000 (Standard)</option>
+                  <option value="10000">$10,000 (High Tech Blitz)</option>
+                </select>
+              </label>
+
+              <label id="cfg-difficulty-wrap" class="cfg-field">
+                <span>SKIRMISH AI DIFFICULTY</span>
+                <select id="cfg-difficulty" class="hud-select">
+                  <option value="easy">Easy</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="brutal">Brutal</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="cfg-toggles">
+              <label class="cfg-check"><input id="cfg-fog" type="checkbox" checked /> Fog of War</label>
+              <label class="cfg-check"><input id="cfg-crates" type="checkbox" checked /> Bonus Crates</label>
+              <label class="cfg-check"><input id="cfg-superweapons" type="checkbox" checked /> Superweapons</label>
+            </div>
+
+            <!-- Faction Intel Card -->
+            <div id="faction-briefing" class="faction-briefing"></div>
+
+            <!-- Solo Actions -->
+            <div id="lobby-solo-panel" class="mp-section">
+              <div class="lobby-action-row">
+                <button id="btn-deploy-solo" class="primary-btn full-btn">DEPLOY SKIRMISH</button>
+              </div>
+            </div>
+
+            <!-- 1v1 Multiplayer Idle Actions -->
+            <div id="mp-lobby-idle" class="mp-section hidden">
+              <button id="btn-mp-host" class="primary-btn full-btn">CREATE 1v1 LOBBY &amp; GET INVITE LINK</button>
               <div class="mp-divider"><span>OR JOIN WITH ROOM CODE</span></div>
               <div class="mp-join-row">
                 <input id="mp-code-input" type="text" maxlength="8" placeholder="ROOM CODE (e.g. K7P4XM)" />
@@ -142,6 +184,7 @@
               </div>
             </div>
 
+            <!-- 1v1 Multiplayer Active Lobby -->
             <div id="mp-lobby-active" class="mp-section hidden">
               <div class="mp-room-meta">
                 <div>
@@ -149,8 +192,21 @@
                   <strong id="mp-room-code" class="room-code-display">------</strong>
                 </div>
                 <div>
-                  <span class="meta-label">YOUR FACTION</span>
+                  <span class="meta-label">YOUR SIDE</span>
                   <strong id="mp-faction-label">ALLIES (BLUE)</strong>
+                </div>
+              </div>
+
+              <div class="roster-grid">
+                <div class="roster-slot">
+                  <span class="meta-label">HOST</span>
+                  <strong id="roster-host-side" class="blue-text">ALLIES</strong>
+                  <span id="roster-host-ready" class="ready-pill">NOT READY</span>
+                </div>
+                <div class="roster-slot">
+                  <span class="meta-label">CHALLENGER</span>
+                  <strong id="roster-guest-side" class="muted-text">WAITING...</strong>
+                  <span id="roster-guest-ready" class="ready-pill">OPEN SEAT</span>
                 </div>
               </div>
 
@@ -160,9 +216,126 @@
                 <button id="btn-mp-copy" class="primary-btn copy-btn">COPY LINK</button>
               </div>
               <p class="mp-hint">
-                Works across two browser tabs, devices on the same Wi-Fi/LAN, or via any tunnel (Tailscale / ngrok / cloudflared).
+                Includes Delta Sync compression &amp; 45s mid-game auto-reconnect if a tab refreshes or drops.
               </p>
-              <button id="btn-mp-leave" class="hud-btn danger-btn full-btn">LEAVE MATCH &amp; RETURN TO SOLO</button>
+
+              <div class="lobby-action-row">
+                <button id="btn-mp-ready" class="hud-btn full-btn">READY UP</button>
+                <button id="btn-mp-start" class="primary-btn full-btn">DEPLOY 1v1 MATCH</button>
+              </div>
+              <button id="btn-mp-leave" class="hud-btn danger-btn full-btn" style="margin-top: 8px">
+                LEAVE ROOM &amp; RETURN TO SOLO
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Replay Export / Import Modal -->
+        <div id="replay-modal" class="modal hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h2>TACTICAL REPLAY ARCHIVE</h2>
+              <button id="btn-close-replay" class="hud-btn">✕</button>
+            </div>
+            <p class="briefing-lead">
+              Every match is deterministically recorded using seeded simulation ticks &amp; command logs. Save your battle as a tiny <code>.json</code> file or load one to scrub through at 1x–4x speed.
+            </p>
+            <div id="replay-meta-info" class="mp-status-pill">CURRENT MATCH: 0 COMMANDS RECORDED</div>
+            <div class="lobby-action-row">
+              <button id="btn-replay-export" class="primary-btn full-btn">DOWNLOAD CURRENT REPLAY (.JSON)</button>
+            </div>
+            <div class="mp-divider"><span>OR WATCH A SAVED REPLAY</span></div>
+            <input id="replay-file-input" type="file" accept=".json,application/json" class="file-input" />
+            <button id="btn-replay-import" class="hud-btn full-btn" style="padding: 9px">
+              LOAD &amp; WATCH REPLAY FILE (.JSON)
+            </button>
+          </div>
+        </div>
+
+        <!-- Custom .glb & Audio Pack Override Modal -->
+        <div id="assets-modal" class="modal hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h2>CUSTOM ASSETS // .GLB &amp; AUDIO OVERRIDES</h2>
+              <button id="btn-close-assets" class="hud-btn">✕</button>
+            </div>
+            <p class="briefing-lead">
+              Drop in your own <strong>.glb</strong> 3D models (materials prefixed <code>TeamColor</code> auto-tint to faction colors, and optional <code>Turret</code>/<code>Barrel</code> nodes rotate automatically) or custom <strong>.wav/.mp3</strong> sound clips. For permanent overrides, add entries to <code>public/assets/manifest.json</code>.
+            </p>
+
+            <div class="asset-section">
+              <span class="meta-label">LIVE .GLB MODEL OVERRIDE</span>
+              <div class="mp-join-row">
+                <select id="asset-model-target" class="hud-select" style="flex: 1">
+                  <option value="medium_tank">Unit: Medium Tank</option>
+                  <option value="prism_tank">Unit: Prism Tank (Allies)</option>
+                  <option value="chrono_tank">Unit: Chrono Tank (Allies)</option>
+                  <option value="mammoth_tank">Unit: Mammoth Tank (Soviets)</option>
+                  <option value="v2_launcher">Unit: V2 Launcher (Soviets)</option>
+                  <option value="kirov">Unit: Kirov Airship (Soviets)</option>
+                  <option value="harvester">Unit: Ore Harvester</option>
+                  <option value="conyard">Building: Construction Yard</option>
+                  <option value="power">Building: Power Plant</option>
+                  <option value="prism">Building: Prism Tower</option>
+                  <option value="tesla">Building: Tesla Coil</option>
+                  <option value="chronosphere">Building: Chronosphere</option>
+                  <option value="silo">Building: Nuclear Silo</option>
+                </select>
+                <button id="btn-asset-pick-glb" class="primary-btn copy-btn">LOAD .GLB</button>
+              </div>
+              <input id="asset-glb-input" type="file" accept=".glb,.gltf" class="file-input" />
+            </div>
+
+            <div class="asset-section" style="margin-top: 12px">
+              <span class="meta-label">LIVE AUDIO CLIP OVERRIDE</span>
+              <div class="mp-join-row">
+                <select id="asset-audio-target" class="hud-select" style="flex: 1">
+                  <option value="shot_shell">SFX: Tank Cannon</option>
+                  <option value="shot_prism">SFX: Prism Laser</option>
+                  <option value="shot_tesla">SFX: Tesla Zap</option>
+                  <option value="shot_rocket">SFX: Rocket / V2 Launch</option>
+                  <option value="explosion">SFX: Explosion</option>
+                  <option value="chrono_warp">SFX: Chrono Warp</option>
+                  <option value="nuke_detonation">SFX: Nuke Detonation</option>
+                  <option value="iron_curtain">SFX: Iron Curtain</option>
+                </select>
+                <button id="btn-asset-pick-audio" class="hud-btn join-btn">LOAD AUDIO</button>
+              </div>
+              <input id="asset-audio-input" type="file" accept="audio/*" class="file-input" />
+            </div>
+
+            <div id="asset-override-list" class="asset-override-list">
+              No custom overrides active (using built-in procedural PBR &amp; Web Audio synth).
+            </div>
+            <button id="btn-asset-clear" class="hud-btn danger-btn full-btn" style="margin-top: 10px">
+              RESET TO BUILT-IN PROCEDURAL ASSETS
+            </button>
+          </div>
+        </div>
+
+        <div id="help-modal" class="modal hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h2>TACTICAL BRIEFING // CONTROLS</h2>
+              <button id="btn-close-help" class="hud-btn">✕</button>
+            </div>
+            <div class="modal-body">
+              <p class="briefing-lead">
+                <strong class="blue-text">ALLIES</strong> command high-tech <b>Prism Towers</b>, bouncing <b>Prism Tanks</b>, phase-blinking <b>Chrono Tanks</b>, <b>A-10 Air Strikes</b> &amp; the <b>Chronosphere</b> (2-click squad teleport).<br />
+                <strong class="red-text">SOVIETS</strong> bring brute firepower: <b>Tesla Coils</b>, <b>Tesla Troopers</b>, <b>V2 Artillery</b>, quad-tracked <b>Mammoth Tanks</b>, <b>Kirov Airships</b>, <b>Iron Curtain</b> &amp; <b>Nuclear Silo</b>!
+              </p>
+              <div class="controls-grid">
+                <div><strong>Left Click / Drag</strong></div><div>Select unit, building, or marquee box</div>
+                <div><strong>Double Click Unit</strong></div><div>Select all matching units on screen</div>
+                <div><strong>Right Click Ground</strong></div><div>Move in formation (Chrono Tanks phase-blink &gt;14 tiles!)</div>
+                <div><strong>Right Click Enemy</strong></div><div>Focus fire / Attack target</div>
+                <div><strong>G + Click / Shift+RMB</strong></div><div>Attack-Move (engage enemies along route)</div>
+                <div><strong>Chronoshift (2 Clicks)</strong></div><div>Click 1: select friendly squad · Click 2: warp destination</div>
+                <div><strong>R / V</strong></div><div>Toggle Building Repair / Sell cursor mode</div>
+                <div><strong>Ctrl + 1–5 / 1–5</strong></div><div>Assign / recall control groups</div>
+                <div><strong>WASD / Arrows / MMB</strong></div><div>Pan camera · <strong>Q/E</strong> Rotate · <strong>H/Space</strong> Base</div>
+                <div><strong>Right Click Sidebar</strong></div><div>Cancel build &amp; refund spent credits</div>
+              </div>
             </div>
           </div>
         </div>
@@ -172,7 +345,10 @@
             <h1 id="gameover-title">MISSION ACCOMPLISHED</h1>
             <p id="gameover-subtitle"></p>
             <div id="gameover-stats" class="stats-grid"></div>
-            <button id="btn-restart" class="primary-btn">DEPLOY NEW SKIRMISH</button>
+            <div class="lobby-action-row">
+              <button id="btn-gameover-replay" class="hud-btn full-btn" style="padding: 10px">SAVE REPLAY (.JSON)</button>
+              <button id="btn-restart" class="primary-btn full-btn">DEPLOY NEW SKIRMISH</button>
+            </div>
           </div>
         </div>
       </div>

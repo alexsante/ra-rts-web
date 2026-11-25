@@ -2,6 +2,30 @@ export type Faction = 'allies' | 'soviets';
 export type MapPreset = 'canyon' | 'arctic' | 'volcanic';
 export type AIDifficulty = 'easy' | 'normal' | 'brutal';
 
+export interface MatchConfig {
+  mapPreset: MapPreset;
+  hostFaction: Faction;
+  startingCredits: number;
+  difficulty: AIDifficulty;
+  fogOfWar: boolean;
+  cratesEnabled: boolean;
+  superweaponsEnabled: boolean;
+  balancedPvP: boolean;
+  seed: number;
+}
+
+export const DEFAULT_MATCH_CONFIG: MatchConfig = {
+  mapPreset: 'canyon',
+  hostFaction: 'allies',
+  startingCredits: 5000,
+  difficulty: 'normal',
+  fogOfWar: true,
+  cratesEnabled: true,
+  superweaponsEnabled: true,
+  balancedPvP: false,
+  seed: 1337,
+};
+
 export type BuildingType =
   | 'conyard'
   | 'power'
@@ -9,8 +33,10 @@ export type BuildingType =
   | 'barracks'
   | 'warfactory'
   | 'turret'
+  | 'prism'
   | 'tesla'
   | 'techcenter'
+  | 'chronosphere'
   | 'silo';
 
 export type UnitType =
@@ -19,13 +45,15 @@ export type UnitType =
   | 'tesla_trooper'
   | 'harvester'
   | 'medium_tank'
+  | 'prism_tank'
+  | 'chrono_tank'
   | 'v2_launcher'
   | 'mammoth_tank'
   | 'kirov';
 
-export type SuperweaponType = 'airstrike' | 'iron_curtain' | 'nuke';
+export type SuperweaponType = 'airstrike' | 'chronoshift' | 'iron_curtain' | 'nuke';
 export type BuildableType = BuildingType | UnitType;
-export type DamageType = 'bullet' | 'shell' | 'rocket' | 'tesla' | 'nuke';
+export type DamageType = 'bullet' | 'shell' | 'rocket' | 'tesla' | 'prism' | 'nuke';
 export type ArmorType = 'infantry' | 'light' | 'heavy' | 'building';
 export type CrateKind = 'cash' | 'veterancy' | 'heal' | 'reinforcement';
 
@@ -45,6 +73,8 @@ export interface BuildingSpec {
   footprint: [number, number];
   sight: number;
   requires: BuildingType[];
+  factions?: Faction[]; // undefined = both factions
+  isSuperweaponStructure?: boolean;
   description: string;
   hotkey: string;
   maxCount?: number;
@@ -57,6 +87,7 @@ export interface BuildingSpec {
     splashRadius?: number;
     requiresPower?: boolean;
     canTargetAir?: boolean;
+    chainBounceRange?: number;
   };
 }
 
@@ -73,7 +104,9 @@ export interface UnitSpec {
   radius: number;
   sight: number;
   armor: ArmorType;
+  factions?: Faction[]; // undefined = both factions
   isAir?: boolean;
+  canPhaseBlink?: boolean;
   producedAt: 'barracks' | 'warfactory';
   requires: BuildingType[];
   description: string;
@@ -92,6 +125,7 @@ export interface UnitSpec {
     dualBarrel?: boolean;
     arcHeight?: number;
     canTargetAir?: boolean;
+    chainBounceRange?: number;
   };
 }
 
@@ -148,8 +182,9 @@ export interface UnitEntity {
   hp: number;
   maxHp: number;
   kills: number;
-  rank: 0 | 1 | 2; // 0 = rookie, 1 = veteran, 2 = elite
-  invulnerableTimer: number; // Iron Curtain shield seconds remaining
+  rank: 0 | 1 | 2;
+  invulnerableTimer: number;
+  blinkCooldown: number;
   order: UnitOrder;
   path: Vec2[];
   pathIndex: number;
@@ -204,14 +239,14 @@ export interface OilDerrickEntity {
   y: number;
   z: number;
   owner: Faction | null;
-  captureProgress: number; // 0..1
+  captureProgress: number;
   capturingFaction: Faction | null;
   incomeTimer: number;
 }
 
 export interface PendingStrike {
   id: number;
-  type: SuperweaponType;
+  type: 'airstrike' | 'nuke';
   faction: Faction;
   targetX: number;
   targetZ: number;
@@ -316,6 +351,7 @@ export type SimEvent =
       toY: number;
       toZ: number;
       eliteShot?: boolean;
+      bounceTo?: { x: number; y: number; z: number };
     }
   | {
       type: 'explosion';
@@ -417,15 +453,6 @@ export type SimEvent =
       z: number;
     }
   | {
-      type: 'floating_text';
-      faction: Faction | 'all';
-      text: string;
-      color: string;
-      x: number;
-      y: number;
-      z: number;
-    }
-  | {
       type: 'iron_curtain_cast';
       faction: Faction;
       x: number;
@@ -434,9 +461,29 @@ export type SimEvent =
       affectedCount: number;
     }
   | {
+      type: 'chrono_warp';
+      faction: Faction;
+      fromX: number;
+      fromY: number;
+      fromZ: number;
+      toX: number;
+      toY: number;
+      toZ: number;
+      count: number;
+    }
+  | {
       type: 'radar_alert';
       faction: Faction;
       x: number;
+      z: number;
+    }
+  | {
+      type: 'floating_text';
+      faction: Faction | 'all';
+      text: string;
+      color: string;
+      x: number;
+      y: number;
       z: number;
     }
   | {
@@ -457,7 +504,8 @@ export type SimEvent =
         | 'derrick_captured'
         | 'unit_promoted'
         | 'kirov_reporting'
-        | 'iron_curtain';
+        | 'iron_curtain'
+        | 'chronoshift';
       text: string;
     }
   | {

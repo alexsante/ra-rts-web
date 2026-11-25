@@ -350,6 +350,30 @@ export function getTacticalBadgeTexture(
   } else if (type === 'medium_tank') {
     ctx.fillRect(30, 54, 36, 20);
     ctx.fillRect(44, 42, 8, 16);
+  } else if (type === 'prism_tank') {
+    // Allied Prism diamond reflector + laser beam icon
+    ctx.fillStyle = '#e0faff';
+    ctx.beginPath();
+    ctx.moveTo(48, 39);
+    ctx.lineTo(62, 56);
+    ctx.lineTo(48, 73);
+    ctx.lineTo(34, 56);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#38e8ff';
+    ctx.fillRect(30, 72, 36, 10);
+  } else if (type === 'chrono_tank') {
+    // Allied Chrono Tank twin spacetime warp chevrons
+    ctx.strokeStyle = '#38e8ff';
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.moveTo(30, 56);
+    ctx.lineTo(48, 42);
+    ctx.lineTo(66, 56);
+    ctx.moveTo(30, 72);
+    ctx.lineTo(48, 58);
+    ctx.lineTo(66, 72);
+    ctx.stroke();
   } else if (type === 'v2_launcher') {
     ctx.fillStyle = '#f8fafc';
     ctx.beginPath();

@@ -1,18 +1,23 @@
 import * as THREE from 'three';
+import { audioPack, type AudioCueKey } from './assets/audioPack';
+import { assetModels } from './assets/modelLoader';
 import { SoundEngine } from './audio/sfx';
+import { SnapshotDeltaEncoder } from './net/delta';
 import { MultiplayerClient } from './net/multiplayer';
 import type { GameCommand } from './net/protocol';
 import { GameRenderer } from './render/renderer';
 import { SkirmishAI } from './sim/ai';
 import { SIM_DT } from './sim/config';
-import type {
-  AIDifficulty,
-  BuildingType,
-  Faction,
-  MapPreset,
-  SimEvent,
-  SuperweaponType,
-  UnitType,
+import { ReplayPlayer, ReplayRecorder, parseReplayJson } from './sim/replay';
+import {
+  DEFAULT_MATCH_CONFIG,
+  type BuildingType,
+  type Faction,
+  type MatchConfig,
+  type SimEvent,
+  type SuperweaponType,
+  type UnitType,
+  type Vec2,
 } from './sim/types';
 import { GameWorld } from './sim/world';
 import { CursorToolMode, HUDController } from './ui/hud';
@@ -21,12 +26,29 @@ import './style.css';
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const marqueeEl = document.getElementById('selection-marquee') as HTMLDivElement;
 
-let currentMapPreset: MapPreset = 'canyon';
-let currentDifficulty: AIDifficulty = 'normal';
-let world = new GameWorld(false, currentMapPreset);
-let ai = new SkirmishAI(currentDifficulty);
+let currentConfig: MatchConfig = {
+  ...DEFAULT_MATCH_CONFIG,
+  seed: Math.floor(Math.random() * 1_000_000) + 1,
+};
+let world = new GameWorld(currentConfig);
+let ai = new SkirmishAI(
+  currentConfig.difficulty,
+  currentConfig.hostFaction === 'allies' ? 'soviets' : 'allies'
+);
+let replayRecorder = new ReplayRecorder(currentConfig, 'solo');
+let replayPlayer: ReplayPlayer | null = null;
+
 const renderer = new GameRenderer(canvas, world);
 const sfx = new SoundEngine();
+const deltaEncoder = new SnapshotDeltaEncoder();
+
+// Load optional external `.glb` & custom audio overrides from `/assets/manifest.json`
+void assetModels.loadManifest();
+void audioPack.loadManifest();
+assetModels.onUpdate(() => {
+  renderer.refreshCustomModels();
+  hud.updateAssetOverrideList(assetModels.getLoadedOverrides(), audioPack.getLoadedCues());
+});
 
 const selectedUnits = new Set<number>();
 let selectedBuildingId: number | null = null;
@@ -36,8 +58,10 @@ let placingBuilding = false;
 let attackMoveArmed = false;
 let toolMode: CursorToolMode = 'normal';
 let armedSuperweapon: SuperweaponType | null = null;
+let chronoSource: Vec2 | null = null;
 let paused = false;
 let gameSpeed = 1;
+let matchStarted = false;
 
 const SNAPSHOT_INTERVAL = 1 / 15;
 let snapshotTimer = 0;
@@ -61,6 +85,7 @@ function clearSpecialModes(): void {
   attackMoveArmed = false;
   toolMode = 'normal';
   armedSuperweapon = null;
+  chronoSource = null;
   canvas.style.cursor = 'crosshair';
 }
 
@@ -73,67 +98,114 @@ function pruneSelection(): void {
   }
 }
 
-function resetWorld(balancedPvP: boolean, localFaction: Faction, preset = currentMapPreset): void {
-  currentMapPreset = preset;
-  hud.setMapSelection(preset);
-  world = new GameWorld(balancedPvP, preset);
+function startNewWorld(
+  config: MatchConfig,
+  localFaction: Faction,
+  recordMode: 'solo' | '1v1'
+): void {
+  replayPlayer = null;
+  hud.setReplayModeUI(false);
+
+  currentConfig = { ...config };
+  world = new GameWorld(currentConfig);
   world.setLocalFaction(localFaction);
-  ai = new SkirmishAI(currentDifficulty);
+  const aiFaction: Faction = localFaction === 'allies' ? 'soviets' : 'allies';
+  ai = new SkirmishAI(currentConfig.difficulty, aiFaction);
+  replayRecorder = new ReplayRecorder(currentConfig, recordMode);
+  deltaEncoder.reset();
+
   selectedUnits.clear();
   selectedBuildingId = null;
   controlGroups.clear();
   clearSpecialModes();
   paused = false;
+  matchStarted = true;
   pendingNetEvents = [];
   snapshotTimer = 0;
   guestInterpElapsed = 0;
+
+  hud.applyConfigToForm(currentConfig);
+  hud.setFogButtonState(world.fogEnabled);
+  document.getElementById('gameover-modal')!.classList.add('hidden');
   renderer.rebuildForNewWorld(world);
   hud.resetMinimapCache();
 }
 
 function dispatchCommand(cmd: GameCommand): void {
+  if (replayPlayer) return;
   if (mp.isGuest) {
     mp.sendCommand(cmd);
   } else {
+    replayRecorder.record(world.tickCount, world.localFaction, cmd);
     world.executeCommand(world.localFaction, cmd);
   }
 }
 
-const mp = new MultiplayerClient({
-  onStatusChange: (mode, roomId, faction, info, mapPreset) => {
-    hud.updateMultiplayerStatus(mode, roomId, faction, mp.getInviteUrl(), mp.latencyMs, info);
+function sendImmediateFullSnapshot(): void {
+  if (!mp.isHost) return;
+  deltaEncoder.reset();
+  const snap = world.createSnapshot(pendingNetEvents);
+  pendingNetEvents = [];
+  mp.sendSnapshotPacket(deltaEncoder.encode(snap, true));
+}
 
-    if (mode === 'guest_live') {
-      gameSpeed = 1;
-      paused = false;
-      resetWorld(true, 'soviets', mapPreset ?? 'canyon');
-      hud.closeMultiplayerModal();
-      hud.showEvaBanner('Connected as Soviet Command — Destroy the Allied base in the SW!');
-    } else if (mode === 'hosting_wait') {
-      hud.openMultiplayerModal();
-    } else if (mode === 'solo' && world.localFaction !== 'allies') {
-      resetWorld(false, 'allies', currentMapPreset);
+const mp = new MultiplayerClient({
+  onStatusChange: (mode, roomId, faction, info, cfg) => {
+    hud.updateMultiplayerStatus(mode, roomId, faction, mp.getInviteUrl(), mp.latencyMs, info);
+    if (cfg) hud.applyConfigToForm(cfg);
+
+    if (mode === 'hosting_lobby' || mode === 'guest_lobby' || mode === 'guest_joining') {
+      hud.openLobbyModal('mp');
+    } else if (mode === 'solo' && world.localFaction !== currentConfig.hostFaction) {
+      startNewWorld({ ...currentConfig, balancedPvP: false }, currentConfig.hostFaction, 'solo');
+    }
+  },
+  onLobbyUpdate: (lobby) => {
+    hud.updateLobbyState(lobby, mp.isHost);
+  },
+  onMatchStarted: (cfg, faction, reconnected) => {
+    gameSpeed = 1;
+    paused = false;
+    hud.closeLobbyModal();
+    if (!reconnected || mp.isGuest) {
+      startNewWorld({ ...cfg, balancedPvP: true }, faction, '1v1');
+    }
+    const sideLabel = faction === 'allies' ? 'Allied Command' : 'Soviet Command';
+    hud.showEvaBanner(
+      reconnected
+        ? `Reconnected as ${sideLabel} — Battlefield resynced!`
+        : `1v1 Match Live (${sideLabel}) — Destroy the enemy base!`
+    );
+    if (mp.isHost) {
+      sendImmediateFullSnapshot();
     }
   },
   onPeerJoined: () => {
-    gameSpeed = 1;
-    paused = false;
-    resetWorld(true, 'allies', currentMapPreset);
-    hud.closeMultiplayerModal();
-    hud.showEvaBanner('Opponent connected! 1v1 match live — Destroy the Soviet base!');
-    mp.sendSnapshot(world.createSnapshot([]));
+    hud.showEvaBanner('Opponent joined the 1v1 Lobby — Ready up & Deploy!');
+  },
+  onPeerDisconnected: (graceSeconds) => {
+    hud.showEvaBanner(`Opponent lost connection — holding seat for ${graceSeconds}s`, true);
+  },
+  onPeerReconnected: () => {
+    hud.showEvaBanner('Opponent reconnected — resyncing live state!');
+    if (mp.isHost) {
+      sendImmediateFullSnapshot();
+    }
   },
   onPeerLeft: () => {
     if (mp.isHost) {
-      hud.showEvaBanner('Opponent disconnected — waiting for reconnect or leave room', true);
+      hud.showEvaBanner('Opponent left room — returned to 1v1 Lobby', true);
+      hud.openLobbyModal('mp');
     } else {
-      hud.showEvaBanner('Host left the match — returned to solo skirmish', true);
-      resetWorld(false, 'allies', currentMapPreset);
+      hud.showEvaBanner('Host closed the room — returned to Solo Skirmish', true);
+      startNewWorld({ ...currentConfig, balancedPvP: false }, 'allies', 'solo');
     }
   },
   onRemoteCommand: (cmd) => {
     if (!mp.isHost) return;
-    world.executeCommand('soviets', cmd);
+    const guestFaction: Faction = world.localFaction === 'allies' ? 'soviets' : 'allies';
+    replayRecorder.record(world.tickCount, guestFaction, cmd);
+    world.executeCommand(guestFaction, cmd);
   },
   onRemoteSnapshot: (snapshot) => {
     if (!mp.isGuest) return;
@@ -145,10 +217,13 @@ const mp = new MultiplayerClient({
       hud.handleSimEvents(snapshot.events, world);
     }
   },
-  onRestartMatch: (mapPreset) => {
+  onFullSyncRequested: () => {
+    if (mp.isHost) sendImmediateFullSnapshot();
+  },
+  onRestartMatch: (cfg) => {
     if (!mp.isGuest) return;
-    resetWorld(true, 'soviets', mapPreset);
-    document.getElementById('gameover-modal')!.classList.add('hidden');
+    const guestFaction: Faction = cfg.hostFaction === 'allies' ? 'soviets' : 'allies';
+    startNewWorld({ ...cfg, balancedPvP: true }, guestFaction, '1v1');
     hud.showEvaBanner(`Host deployed a new 1v1 skirmish on ${world.map.theme.name}!`);
   },
   onChatMessage: (from, text) => {
@@ -162,10 +237,12 @@ const mp = new MultiplayerClient({
 
 const hud = new HUDController({
   onClickBuilding: (type: BuildingType) => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     toolMode = 'normal';
     armedSuperweapon = null;
+    chronoSource = null;
     const prod = world.players[world.localFaction].buildingProd;
     if (prod && prod.type === type && prod.ready) {
       placingBuilding = !placingBuilding;
@@ -177,12 +254,14 @@ const hud = new HUDController({
     }
   },
   onCancelBuilding: () => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     placingBuilding = false;
     dispatchCommand({ type: 'cancel_building' });
   },
   onClickUnit: (type: UnitType, count: number) => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     for (let i = 0; i < count; i++) {
@@ -190,6 +269,7 @@ const hud = new HUDController({
     }
   },
   onCancelUnit: (type: UnitType) => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     dispatchCommand({ type: 'cancel_unit', unitType: type });
@@ -198,7 +278,7 @@ const hud = new HUDController({
     renderer.setCameraTargetWorld(wx, wz);
   },
   onMinimapRightClick: (wx: number, wz: number, attackMove: boolean) => {
-    if (selectedUnits.size === 0) return;
+    if (replayPlayer || selectedUnits.size === 0) return;
     sfx.unlock();
     dispatchCommand({
       type: 'move',
@@ -238,26 +318,8 @@ const hud = new HUDController({
     sfx.unlock();
     return sfx.toggleMusic();
   },
-  onChangeMap: (preset: MapPreset) => {
-    sfx.playClick();
-    if (mp.isGuest) return;
-    currentMapPreset = preset;
-    if (mp.isHost) {
-      resetWorld(true, 'allies', preset);
-      mp.sendRestartMatch(preset);
-      mp.sendSnapshot(world.createSnapshot([]));
-    } else {
-      resetWorld(false, 'allies', preset);
-    }
-    hud.showEvaBanner(`Deployed to ${world.map.theme.name} — ${world.map.theme.subtitle}`);
-  },
-  onChangeDifficulty: (diff: AIDifficulty) => {
-    sfx.playClick();
-    currentDifficulty = diff;
-    ai.difficulty = diff;
-    hud.showEvaBanner(`Skirmish AI set to ${diff.toUpperCase()}`);
-  },
   onToggleToolMode: (mode: CursorToolMode) => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     const next = toolMode === mode ? 'normal' : mode;
@@ -266,23 +328,32 @@ const hud = new HUDController({
     canvas.style.cursor = next === 'sell' ? 'alias' : next === 'repair' ? 'help' : 'crosshair';
   },
   onArmSuperweapon: (weapon: SuperweaponType) => {
+    if (replayPlayer) return;
     sfx.unlock();
     sfx.playClick();
     const p = world.players[world.localFaction];
     const sw = p.superweapons[weapon];
     if (!sw.unlocked || sw.cooldown > 0.05) return;
-    if (weapon === 'nuke' && p.powerRatio < 1) {
-      hud.showEvaBanner('Nuclear Silo offline — Build more Power Plants!', true);
+    if ((weapon === 'nuke' || weapon === 'chronoshift') && p.powerRatio < 1) {
+      hud.showEvaBanner(
+        weapon === 'nuke'
+          ? 'Nuclear Silo offline — Build more Power Plants!'
+          : 'Chronosphere offline — Build more Power Plants!',
+        true
+      );
       return;
     }
     const toggleOff = armedSuperweapon === weapon;
     clearSpecialModes();
     if (!toggleOff) {
       armedSuperweapon = weapon;
+      chronoSource = null;
       canvas.style.cursor = 'crosshair';
       hud.showEvaBanner(
         weapon === 'nuke'
           ? 'Tactical Nuke Armed — Left-Click Target Coordinates!'
+          : weapon === 'chronoshift'
+          ? 'Chronosphere Armed — Click 1: Select Friendly Squad to Warp!'
           : weapon === 'iron_curtain'
           ? 'Iron Curtain Armed — Left-Click Friendly Units for 10s Invulnerability!'
           : 'A-10 Air Strike Ready — Left-Click Strike Zone!'
@@ -304,48 +375,169 @@ const hud = new HUDController({
       }
     }
   },
+  onDeploySolo: (cfg: MatchConfig) => {
+    sfx.unlock();
+    sfx.playClick();
+    if (mp.isInRoom) mp.leaveRoom();
+    startNewWorld({ ...cfg, balancedPvP: false }, cfg.hostFaction, 'solo');
+    hud.showEvaBanner(
+      `${cfg.hostFaction === 'allies' ? 'Allied' : 'Soviet'} Command deployed to ${world.map.theme.name}!`
+    );
+  },
   onRestart: () => {
     if (mp.isHost) {
-      resetWorld(true, 'allies', currentMapPreset);
-      mp.sendRestartMatch(currentMapPreset);
-      mp.sendSnapshot(world.createSnapshot([]));
+      const nextCfg: MatchConfig = {
+        ...currentConfig,
+        balancedPvP: true,
+        seed: Math.floor(Math.random() * 1_000_000) + 1,
+      };
+      startNewWorld(nextCfg, nextCfg.hostFaction, '1v1');
+      mp.sendRestartMatch(nextCfg);
+      sendImmediateFullSnapshot();
       hud.showEvaBanner('New 1v1 skirmish deployed!');
     } else if (mp.isGuest) {
       hud.showEvaBanner('Waiting for Host to deploy a new match');
     } else {
-      resetWorld(false, 'allies', currentMapPreset);
+      startNewWorld(
+        {
+          ...currentConfig,
+          balancedPvP: false,
+          seed: Math.floor(Math.random() * 1_000_000) + 1,
+        },
+        currentConfig.hostFaction,
+        'solo'
+      );
       hud.showEvaBanner('Battlefield control online — Welcome back, Commander');
     }
   },
-  onHostMultiplayer: () => {
+  onHostMultiplayer: (cfg: MatchConfig) => {
     sfx.unlock();
     sfx.playClick();
-    mp.hostRoom(currentMapPreset);
+    mp.hostRoom({ ...cfg, balancedPvP: true });
   },
   onJoinMultiplayer: (code: string) => {
     sfx.unlock();
     sfx.playClick();
     mp.joinRoom(code);
   },
+  onUpdateLobbyConfig: (cfg: Partial<MatchConfig>) => {
+    mp.updateLobbyConfig(cfg);
+  },
+  onToggleReady: () => {
+    sfx.playClick();
+    const myReady = mp.isHost ? mp.hostReady : mp.guestReady;
+    mp.setReady(!myReady);
+  },
+  onStartMultiplayerMatch: () => {
+    sfx.unlock();
+    sfx.playClick();
+    mp.startMatch();
+  },
   onLeaveMultiplayer: () => {
     sfx.playClick();
     mp.leaveRoom();
-    hud.closeMultiplayerModal();
-    resetWorld(false, 'allies', currentMapPreset);
-    hud.showEvaBanner('Returned to Solo Skirmish vs Soviet AI');
+    hud.closeLobbyModal();
+    startNewWorld({ ...currentConfig, balancedPvP: false }, 'allies', 'solo');
+    hud.showEvaBanner('Returned to Solo Skirmish');
   },
   onSendChat: (text: string) => {
     mp.sendChat(text);
     hud.appendChatMessage(world.localFaction, text);
   },
+  onExportReplay: () => {
+    const data = replayRecorder.finalize(world.tickCount, world.winner);
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `red-alert-replay-${data.config.mapPreset}-${stamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    hud.showEvaBanner(`Replay downloaded (${data.commands.length} commands)`);
+  },
+  onImportReplayFile: async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = parseReplayJson(text);
+      if (mp.isInRoom) mp.leaveRoom();
+      replayPlayer = new ReplayPlayer(parsed);
+      world = replayPlayer.world;
+      world.fogEnabled = false;
+      hud.setFogButtonState(false);
+      selectedUnits.clear();
+      selectedBuildingId = null;
+      clearSpecialModes();
+      renderer.rebuildForNewWorld(world);
+      hud.resetMinimapCache();
+      hud.setReplayModeUI(true, true, 1);
+      hud.showEvaBanner(
+        `Watching Replay (${parsed.mode.toUpperCase()} · ${world.map.theme.name}) — ${Math.round(parsed.durationTicks * SIM_DT)}s`
+      );
+    } catch (err) {
+      hud.showEvaBanner(`Replay error: ${(err as Error).message}`, true);
+    }
+  },
+  onReplayTogglePlay: () => {
+    if (!replayPlayer) return false;
+    replayPlayer.playing = !replayPlayer.playing;
+    return replayPlayer.playing;
+  },
+  onReplayCycleSpeed: () => {
+    if (!replayPlayer) return 1;
+    const speeds: Array<1 | 2 | 4> = [1, 2, 4];
+    const next = speeds[(speeds.indexOf(replayPlayer.speed) + 1) % speeds.length];
+    replayPlayer.speed = next;
+    return next;
+  },
+  onReplaySeek: (fraction: number) => {
+    if (!replayPlayer) return;
+    replayPlayer.seekToFraction(fraction);
+    world = replayPlayer.world;
+    world.fogEnabled = false;
+    renderer.rebuildForNewWorld(world);
+  },
+  onReplayExit: () => {
+    replayPlayer = null;
+    hud.setReplayModeUI(false);
+    startNewWorld({ ...currentConfig, balancedPvP: false }, currentConfig.hostFaction, 'solo');
+    hud.showEvaBanner('Exited Replay — Returned to Solo Skirmish');
+  },
+  onLoadGlbOverride: async (targetId: string, file: File) => {
+    try {
+      await assetModels.registerLocalGlb(targetId, file);
+      hud.showEvaBanner(`Custom 3D model loaded for "${targetId}" (${file.name})`);
+    } catch (err) {
+      hud.showEvaBanner(`Failed to load .glb: ${(err as Error).message}`, true);
+    }
+  },
+  onLoadAudioOverride: async (cueKey: string, file: File) => {
+    try {
+      await audioPack.registerLocalAudio(cueKey as AudioCueKey, file);
+      hud.updateAssetOverrideList(assetModels.getLoadedOverrides(), audioPack.getLoadedCues());
+      hud.showEvaBanner(`Custom audio loaded for "${cueKey}" (${file.name})`);
+    } catch (err) {
+      hud.showEvaBanner(`Failed to load audio: ${(err as Error).message}`, true);
+    }
+  },
+  onClearAssetOverrides: () => {
+    assetModels.clearAllOverrides();
+    for (const cue of audioPack.getLoadedCues()) audioPack.clearOverride(cue);
+    hud.updateAssetOverrideList([], []);
+    hud.showEvaBanner('Restored built-in procedural 3D PBR & Web Audio assets');
+  },
+  getReplayCommandCount: () => replayRecorder.count,
 });
 
+// Check for ?room=CODE invite URL, otherwise show Pre-Game Command Lobby
 const initialRoom = new URLSearchParams(window.location.search).get('room');
 if (initialRoom) {
-  hud.openMultiplayerModal();
+  hud.openLobbyModal('mp');
   mp.joinRoom(initialRoom);
 } else {
-  hud.showEvaBanner('Battlefield control online — Capture Oil Derricks & destroy the NE base!');
+  hud.applyConfigToForm(currentConfig);
+  hud.openLobbyModal('solo');
 }
 
 // --- MOUSE CONTROLS ---
@@ -363,6 +555,8 @@ canvas.addEventListener('mousedown', (e) => {
     panLastY = e.clientY;
     return;
   }
+
+  if (replayPlayer) return;
 
   if (e.button === 2) {
     if (placingBuilding || attackMoveArmed || toolMode !== 'normal' || armedSuperweapon) {
@@ -393,7 +587,6 @@ canvas.addEventListener('mousedown', (e) => {
     const unitIds = Array.from(selectedUnits);
     const picked = renderer.pickEntityAtScreen(world, e.clientX, e.clientY);
 
-    // Draw crisp fading tactical command lines from selected units to target!
     const drawOrderLines = (tx: number, ty: number, tz: number, col: number) => {
       let drawn = 0;
       for (const id of unitIds) {
@@ -432,16 +625,44 @@ canvas.addEventListener('mousedown', (e) => {
   }
 
   if (e.button === 0) {
-    // 1. Fire armed Superweapon!
+    // 1. Fire armed Superweapon (Chronoshift uses 2-click Source → Destination!)
     if (armedSuperweapon) {
       const wp = renderer.screenToWorld(e.clientX, e.clientY);
       if (wp) {
+        if (armedSuperweapon === 'chronoshift' && !chronoSource) {
+          let foundFriendly = false;
+          for (const u of world.units.values()) {
+            if (
+              u.faction === world.localFaction &&
+              Math.hypot(u.x - wp.x, u.z - wp.z) <= 9.0
+            ) {
+              foundFriendly = true;
+              break;
+            }
+          }
+          if (!foundFriendly) {
+            hud.showEvaBanner('Click on friendly units to select Chronoshift squad!', true);
+            return;
+          }
+          chronoSource = { x: wp.x, z: wp.z };
+          renderer.vfx.spawnGroundPing(wp.x, wp.y, wp.z, 0x38e8ff);
+          sfx.playClick();
+          hud.showEvaBanner('Squad locked — Click 2: Choose warp destination!');
+          return;
+        }
+
         dispatchCommand({
           type: 'fire_superweapon',
           weapon: armedSuperweapon,
           target: { x: wp.x, z: wp.z },
+          source: chronoSource ?? undefined,
         });
-        renderer.vfx.spawnGroundPing(wp.x, wp.y, wp.z, 0xff2a2a);
+        renderer.vfx.spawnGroundPing(
+          wp.x,
+          wp.y,
+          wp.z,
+          armedSuperweapon === 'chronoshift' ? 0x38e8ff : 0xff2a2a
+        );
         sfx.playOrderConfirm();
       }
       clearSpecialModes();
@@ -597,7 +818,10 @@ canvas.addEventListener(
 // --- KEYBOARD SHORTCUTS ---
 
 window.addEventListener('keydown', (e) => {
-  if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLSelectElement) {
+  if (
+    document.activeElement instanceof HTMLInputElement ||
+    document.activeElement instanceof HTMLSelectElement
+  ) {
     return;
   }
 
@@ -606,21 +830,20 @@ window.addEventListener('keydown', (e) => {
 
   if (k === 'escape') {
     clearSpecialModes();
-    document.getElementById('help-modal')!.classList.add('hidden');
-    hud.closeMultiplayerModal();
+    hud.closeAllModals();
     return;
   }
-  if (k === 'g' && selectedUnits.size > 0 && !e.ctrlKey && !e.metaKey) {
+  if (k === 'g' && selectedUnits.size > 0 && !e.ctrlKey && !e.metaKey && !replayPlayer) {
     clearSpecialModes();
     attackMoveArmed = true;
     canvas.style.cursor = 'cell';
     return;
   }
-  if (k === 'r' && !e.ctrlKey && !e.metaKey) {
+  if (k === 'r' && !e.ctrlKey && !e.metaKey && !replayPlayer) {
     document.getElementById('btn-tool-repair')!.click();
     return;
   }
-  if (k === 'v' && !e.ctrlKey && !e.metaKey) {
+  if (k === 'v' && !e.ctrlKey && !e.metaKey && !replayPlayer) {
     document.getElementById('btn-tool-sell')!.click();
     return;
   }
@@ -632,7 +855,7 @@ window.addEventListener('keydown', (e) => {
     hud.switchTab('units');
     return;
   }
-  if (k === 'x' && selectedUnits.size > 0 && !e.ctrlKey && !e.metaKey) {
+  if (k === 'x' && selectedUnits.size > 0 && !e.ctrlKey && !e.metaKey && !replayPlayer) {
     dispatchCommand({ type: 'stop', unitIds: Array.from(selectedUnits) });
     sfx.playClick();
     return;
@@ -652,7 +875,7 @@ window.addEventListener('keydown', (e) => {
     hud.focusChatInput();
     return;
   }
-  if (k === 'p' && !mp.isGuest) {
+  if (k === 'p' && !mp.isGuest && !replayPlayer) {
     document.getElementById('btn-pause')!.click();
     return;
   }
@@ -719,11 +942,33 @@ function frame(now: number): void {
 
   let alpha = 1;
 
-  if (mp.isGuest) {
+  if (replayPlayer) {
+    if (replayPlayer.playing && !replayPlayer.finished) {
+      accumulator += rawDt * replayPlayer.speed;
+      let steps = 0;
+      while (accumulator >= SIM_DT && steps < 10 && !replayPlayer.finished) {
+        replayPlayer.stepTick();
+        accumulator -= SIM_DT;
+        steps++;
+      }
+    }
+    const events = world.drainEvents();
+    if (events.length > 0) {
+      renderer.handleSimEvents(events, world);
+      sfx.handleSimEvents(events, world.localFaction);
+    }
+    hud.updateReplayBar(
+      replayPlayer.currentSeconds,
+      replayPlayer.totalSeconds,
+      replayPlayer.progressFraction
+    );
+    alpha = Math.max(0, Math.min(1, accumulator / SIM_DT));
+  } else if (mp.isGuest) {
     guestInterpElapsed += rawDt;
     alpha = Math.max(0, Math.min(1, guestInterpElapsed / SNAPSHOT_INTERVAL));
   } else {
-    const shouldSimulate = !paused && !world.winner && mp.mode !== 'hosting_wait';
+    const shouldSimulate =
+      matchStarted && !paused && !world.winner && mp.mode !== 'hosting_lobby';
     if (shouldSimulate) {
       const effectiveSpeed = mp.mode === 'hosting_live' ? 1 : gameSpeed;
       accumulator += rawDt * effectiveSpeed;
@@ -752,7 +997,8 @@ function frame(now: number): void {
       snapshotTimer += rawDt;
       if (snapshotTimer >= SNAPSHOT_INTERVAL) {
         snapshotTimer = 0;
-        mp.sendSnapshot(world.createSnapshot(pendingNetEvents));
+        const packet = deltaEncoder.encode(world.createSnapshot(pendingNetEvents));
+        mp.sendSnapshotPacket(packet);
         pendingNetEvents = [];
       }
     }
@@ -772,7 +1018,7 @@ function frame(now: number): void {
 
   if (armedSuperweapon) {
     lastWorldMouse = renderer.screenToWorld(mouseClientX, mouseClientY);
-    renderer.updateSuperweaponReticle(armedSuperweapon, lastWorldMouse);
+    renderer.updateSuperweaponReticle(armedSuperweapon, lastWorldMouse, chronoSource, world);
     renderer.updatePlacementPreview(world, null, null);
   } else if (placingBuilding && bProd?.ready) {
     lastWorldMouse = renderer.screenToWorld(mouseClientX, mouseClientY);
@@ -785,14 +1031,18 @@ function frame(now: number): void {
 
   pruneSelection();
 
-  const footerText =
-    mp.mode === 'hosting_live'
-      ? `1v1 LIVE // ALLIED HOST · ROOM ${mp.roomId}`
-      : mp.mode === 'guest_live'
-      ? `1v1 LIVE // SOVIET COMMAND · ROOM ${mp.roomId}`
-      : mp.mode === 'hosting_wait'
-      ? `WAITING FOR OPPONENT // ROOM ${mp.roomId}`
-      : ai.statusText;
+  const sideTag = world.localFaction === 'allies' ? 'ALLIES' : 'SOVIETS';
+  const footerText = replayPlayer
+    ? `REPLAY PLAYBACK // ${replayPlayer.speed}x`
+    : mp.mode === 'hosting_live'
+    ? `1v1 LIVE // ${sideTag} HOST · ROOM ${mp.roomId}`
+    : mp.mode === 'guest_live'
+    ? `1v1 LIVE // ${sideTag} GUEST · ROOM ${mp.roomId}`
+    : mp.mode === 'hosting_lobby' || mp.mode === 'guest_lobby'
+    ? `1v1 LOBBY // ROOM ${mp.roomId}`
+    : !matchStarted
+    ? 'CONFIGURE SKIRMISH IN COMMAND LOBBY'
+    : ai.statusText;
 
   renderer.renderFrame(world, rawDt, alpha, selectedUnits, selectedBuildingId);
   hud.update(
@@ -803,6 +1053,7 @@ function frame(now: number): void {
     placingBuilding,
     toolMode,
     armedSuperweapon,
+    chronoSource !== null,
     renderer.getCameraGroundCorners()
   );
 }

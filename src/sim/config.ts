@@ -1,15 +1,21 @@
-import { ArmorType, BuildingSpec, BuildingType, DamageType, UnitSpec, UnitType } from './types';
+import { ArmorType, BuildingSpec, BuildingType, DamageType, Faction, SuperweaponType, UnitSpec, UnitType } from './types';
 
 export const MAP_SIZE = 72;
 export const TILE_SIZE = 2.0;
-export const WORLD_SIZE = MAP_SIZE * TILE_SIZE; // 144 x 144 world units
+export const WORLD_SIZE = MAP_SIZE * TILE_SIZE;
 export const SIM_HZ = 20;
 export const SIM_DT = 1 / SIM_HZ;
 export const BUILD_RADIUS_TILES = 12;
 
-export const AIRSTRIKE_COOLDOWN = 45; // seconds
-export const IRON_CURTAIN_COOLDOWN = 55; // seconds
-export const NUKE_COOLDOWN = 85; // seconds
+export const AIRSTRIKE_COOLDOWN = 45;
+export const CHRONOSHIFT_COOLDOWN = 68;
+export const IRON_CURTAIN_COOLDOWN = 55;
+export const NUKE_COOLDOWN = 85;
+
+export const FACTION_SUPERWEAPONS: Record<Faction, [SuperweaponType, SuperweaponType]> = {
+  allies: ['airstrike', 'chronoshift'],
+  soviets: ['iron_curtain', 'nuke'],
+};
 
 export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
   conyard: {
@@ -37,7 +43,7 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [2, 2],
     sight: 14,
     requires: ['conyard'],
-    description: 'Generates +100 Power. Required for full build speed, Tesla Coils & Superweapons.',
+    description: 'Generates +100 Power. Keeps build speed, beam/coil towers & superweapons online.',
     hotkey: '1',
   },
   refinery: {
@@ -65,7 +71,7 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [2, 2],
     sight: 16,
     requires: ['conyard', 'power'],
-    description: 'Trains Rifle Squads, Rocket Squads, and Tesla Troopers.',
+    description: 'Trains infantry fireteams & faction specialist shock troops.',
     hotkey: '3',
   },
   warfactory: {
@@ -79,7 +85,7 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [3, 3],
     sight: 18,
     requires: ['conyard', 'refinery'],
-    description: 'Manufactures Ore Trucks, Medium Tanks, V2 Launchers & Mammoth Tanks.',
+    description: 'Manufactures armored vehicles, artillery & heavy faction war machines.',
     hotkey: '4',
   },
   turret: {
@@ -93,7 +99,7 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [1, 1],
     sight: 20,
     requires: ['conyard', 'barracks'],
-    description: 'Armored twin-cannon bunker. Reliable defense vs infantry & light armor.',
+    description: 'Armored twin-cannon bunker. Defends against ground & airships.',
     hotkey: '5',
     weapon: {
       damage: 34,
@@ -105,21 +111,47 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
       canTargetAir: true,
     },
   },
+  prism: {
+    id: 'prism',
+    name: 'Prism Tower',
+    shortName: 'Prism Tower',
+    cost: 1350,
+    buildTime: 11,
+    maxHp: 620,
+    powerDelta: -75,
+    footprint: [1, 1],
+    sight: 23,
+    requires: ['conyard', 'warfactory'],
+    factions: ['allies'],
+    description: '[ALLIES] Focused crystal laser defense. Beam refracts to strike a second nearby enemy!',
+    hotkey: '6',
+    weapon: {
+      damage: 105,
+      damageType: 'prism',
+      range: 21.5,
+      cooldown: 1.85,
+      projectileSpeed: 0,
+      requiresPower: true,
+      canTargetAir: true,
+      chainBounceRange: 7.5,
+    },
+  },
   tesla: {
     id: 'tesla',
     name: 'Tesla Coil',
     shortName: 'Tesla Coil',
     cost: 1300,
     buildTime: 11,
-    maxHp: 680,
+    maxHp: 700,
     powerDelta: -75,
     footprint: [1, 1],
     sight: 22,
     requires: ['conyard', 'warfactory'],
-    description: 'High-voltage arc tower. Devastates armor, troops & airships. Needs full power!',
+    factions: ['soviets'],
+    description: '[SOVIETS] High-voltage arc tower. Devastates heavy armor, troops & airships. Needs full power!',
     hotkey: '6',
     weapon: {
-      damage: 120,
+      damage: 122,
       damageType: 'tesla',
       range: 19.5,
       cooldown: 2.0,
@@ -140,8 +172,25 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [2, 2],
     sight: 24,
     requires: ['conyard', 'warfactory'],
-    description: 'Unlocks Tesla Troopers, V2 Artillery, Mammoth Tanks, Air Strike & Nuclear Silo.',
+    description: 'Unlocks top-tier faction tech, support power (Air Strike / Iron Curtain), and ultimate superweapon.',
     hotkey: '7',
+    maxCount: 1,
+  },
+  chronosphere: {
+    id: 'chronosphere',
+    name: 'Chronosphere',
+    shortName: 'Chrono',
+    cost: 2600,
+    buildTime: 17,
+    maxHp: 1050,
+    powerDelta: -100,
+    footprint: [2, 2],
+    sight: 22,
+    requires: ['conyard', 'techcenter'],
+    factions: ['allies'],
+    isSuperweaponStructure: true,
+    description: '[ALLIES] Ultimate Superweapon! Instantaneously Chronoshifts up to 6 friendly units anywhere on the map.',
+    hotkey: '8',
     maxCount: 1,
   },
   silo: {
@@ -155,7 +204,9 @@ export const BUILDING_SPECS: Record<BuildingType, BuildingSpec> = {
     footprint: [2, 2],
     sight: 20,
     requires: ['conyard', 'techcenter'],
-    description: 'Superweapon! Arms a Tactical Nuclear Missile every 85s. Needs full power!',
+    factions: ['soviets'],
+    isSuperweaponStructure: true,
+    description: '[SOVIETS] Ultimate Superweapon! Arms a Tactical Nuclear Missile every 85s. Needs full power!',
     hotkey: '8',
     maxCount: 1,
   },
@@ -167,8 +218,10 @@ export const BUILDABLE_BUILDINGS: BuildingType[] = [
   'barracks',
   'warfactory',
   'turret',
+  'prism',
   'tesla',
   'techcenter',
+  'chronosphere',
   'silo',
 ];
 
@@ -234,16 +287,17 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
     shortName: 'Tesla Suit',
     cost: 550,
     buildTime: 6.0,
-    maxHp: 210,
+    maxHp: 215,
     speed: 4.4,
     turnRate: 8.0,
     turretTurnRate: 10.0,
     radius: 0.78,
     sight: 16,
     armor: 'light',
+    factions: ['soviets'],
     producedAt: 'barracks',
     requires: ['barracks', 'techcenter'],
-    description: 'Heavy shock trooper armed with portable Tesla arc coils. Fries troops & armor!',
+    description: '[SOVIETS] Heavy shock exosuit armed with portable Tesla arc coils. Fries troops & armor!',
     hotkey: 'E',
     squadCount: 2,
     weapon: {
@@ -277,7 +331,7 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
   },
   medium_tank: {
     id: 'medium_tank',
-    name: 'Medium Tank',
+    name: 'Battle Tank',
     shortName: 'Med Tank',
     cost: 750,
     buildTime: 7.0,
@@ -302,6 +356,64 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
       arcHeight: 0.7,
     },
   },
+  prism_tank: {
+    id: 'prism_tank',
+    name: 'Prism Tank',
+    shortName: 'Prism Tank',
+    cost: 1250,
+    buildTime: 10.0,
+    maxHp: 390,
+    speed: 5.6,
+    turnRate: 4.2,
+    turretTurnRate: 6.2,
+    radius: 1.18,
+    sight: 21,
+    armor: 'light',
+    factions: ['allies'],
+    producedAt: 'warfactory',
+    requires: ['warfactory', 'techcenter'],
+    description: '[ALLIES] Long-range mirrored laser artillery! Searing prism beams bounce onto a second target.',
+    hotkey: 'Y',
+    weapon: {
+      damage: 88,
+      damageType: 'prism',
+      range: 20.5,
+      cooldown: 2.15,
+      projectileSpeed: 0,
+      chainBounceRange: 6.8,
+    },
+  },
+  chrono_tank: {
+    id: 'chrono_tank',
+    name: 'Chrono Tank',
+    shortName: 'Chrono Tank',
+    cost: 1350,
+    buildTime: 10.5,
+    maxHp: 520,
+    speed: 7.4,
+    turnRate: 5.8,
+    turretTurnRate: 7.0,
+    radius: 1.18,
+    sight: 20,
+    armor: 'heavy',
+    factions: ['allies'],
+    canPhaseBlink: true,
+    producedAt: 'warfactory',
+    requires: ['warfactory', 'techcenter'],
+    description: '[ALLIES] High-speed phase-blink raider! Auto-teleports partway on long moves (12s CD) & fires dual AA/AT missiles.',
+    hotkey: 'U',
+    weapon: {
+      damage: 64,
+      damageType: 'rocket',
+      range: 16.5,
+      cooldown: 1.55,
+      projectileSpeed: 34,
+      splashRadius: 1.6,
+      dualBarrel: true,
+      arcHeight: 1.4,
+      canTargetAir: true,
+    },
+  },
   v2_launcher: {
     id: 'v2_launcher',
     name: 'V2 Rocket Launcher',
@@ -315,9 +427,10 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
     radius: 1.2,
     sight: 21,
     armor: 'light',
+    factions: ['soviets'],
     producedAt: 'warfactory',
     requires: ['warfactory', 'techcenter'],
-    description: 'Long-range siege artillery! Massive explosive blast outranges base turrets.',
+    description: '[SOVIETS] Long-range siege artillery! Massive explosive blast outranges base turrets.',
     hotkey: 'Y',
     weapon: {
       damage: 145,
@@ -343,9 +456,10 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
     radius: 1.45,
     sight: 19,
     armor: 'heavy',
+    factions: ['soviets'],
     producedAt: 'warfactory',
     requires: ['warfactory', 'techcenter'],
-    description: 'Super-heavy dual-cannon titan. Self-repairs below 50% HP & targets airships!',
+    description: '[SOVIETS] Super-heavy dual-cannon titan. Self-repairs below 50% HP & targets airships!',
     hotkey: 'U',
     weapon: {
       damage: 84,
@@ -372,10 +486,11 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
     radius: 1.7,
     sight: 22,
     armor: 'heavy',
+    factions: ['soviets'],
     isAir: true,
     producedAt: 'warfactory',
     requires: ['warfactory', 'techcenter'],
-    description: 'Armored siege zeppelin! Flies straight over cliffs dropping massive bombs.',
+    description: '[SOVIETS] Armored siege zeppelin! Flies straight over cliffs dropping massive bombs.',
     hotkey: 'K',
     weapon: {
       damage: 165,
@@ -395,10 +510,26 @@ export const BUILDABLE_UNITS: UnitType[] = [
   'tesla_trooper',
   'harvester',
   'medium_tank',
+  'prism_tank',
+  'chrono_tank',
   'v2_launcher',
   'mammoth_tank',
   'kirov',
 ];
+
+export function getBuildingsForFaction(faction: Faction): BuildingType[] {
+  return BUILDABLE_BUILDINGS.filter((id) => {
+    const allowed = BUILDING_SPECS[id].factions;
+    return !allowed || allowed.includes(faction);
+  });
+}
+
+export function getUnitsForFaction(faction: Faction): UnitType[] {
+  return BUILDABLE_UNITS.filter((id) => {
+    const allowed = UNIT_SPECS[id].factions;
+    return !allowed || allowed.includes(faction);
+  });
+}
 
 export const DAMAGE_MULTIPLIERS: Record<DamageType, Record<ArmorType, number>> = {
   bullet: {
@@ -424,6 +555,12 @@ export const DAMAGE_MULTIPLIERS: Record<DamageType, Record<ArmorType, number>> =
     light: 1.38,
     heavy: 1.25,
     building: 0.9,
+  },
+  prism: {
+    infantry: 1.8,
+    light: 1.45,
+    heavy: 1.15,
+    building: 1.35,
   },
   nuke: {
     infantry: 3.0,

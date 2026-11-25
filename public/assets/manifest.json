@@ -1,0 +1,5 @@
+{
+  "_readme": "Optional drop-in asset overrides. Add entries under 'models' (keyed by BuildingType or UnitType) or 'audio' (keyed by SFX cue name) pointing to files under /assets/. When empty, the built-in procedural PBR models and Web Audio synth are used automatically.",
+  "models": {},
+  "audio": {}
+}

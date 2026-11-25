@@ -3,6 +3,7 @@ import {
   AIRSTRIKE_COOLDOWN,
   BUILD_RADIUS_TILES,
   BUILDING_SPECS,
+  CHRONOSHIFT_COOLDOWN,
   DAMAGE_MULTIPLIERS,
   IRON_CURTAIN_COOLDOWN,
   MAP_SIZE,
@@ -20,12 +21,14 @@ import {
   BuildingType,
   CrateEntity,
   CrateKind,
+  DEFAULT_MATCH_CONFIG,
   DamageType,
   Entity,
   Faction,
   FalloutZone,
   MapData,
   MapPreset,
+  MatchConfig,
   OilDerrickEntity,
   PendingStrike,
   PlayerState,
@@ -49,7 +52,19 @@ function stepAngle(current: number, target: number, maxDelta: number): number {
   return wrapAngle(current + Math.sign(diff) * maxDelta);
 }
 
+/** Fast deterministic PRNG (Mulberry32) for 100% reproducible replays. */
+function createSeededRng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class GameWorld {
+  readonly config: MatchConfig;
   readonly map: MapData;
   readonly players: Record<Faction, PlayerState>;
   readonly buildings = new Map<number, BuildingEntity>();
@@ -62,13 +77,15 @@ export class GameWorld {
 
   readonly blocked = new Uint8Array(MAP_SIZE * MAP_SIZE);
   readonly fog = new Uint8Array(MAP_SIZE * MAP_SIZE);
-  fogEnabled = true;
+  fogEnabled: boolean;
   localFaction: Faction = 'allies';
 
   simTime = 0;
+  tickCount = 0;
   winner: Faction | null = null;
   events: SimEvent[] = [];
 
+  private readonly rng: () => number;
   private nextId = 1;
   private fogTickCounter = 0;
   private oreRegrowTimer = 0;
@@ -77,11 +94,29 @@ export class GameWorld {
   private lastLowPowerState: Record<Faction, boolean> = { allies: false, soviets: false };
   private initialOreIndices: number[] = [];
 
-  constructor(balancedPvP = false, mapPreset: MapPreset = 'canyon') {
-    this.map = generateMap(mapPreset);
+  constructor(configOrPvP?: Partial<MatchConfig> | boolean, legacyPreset?: MapPreset) {
+    if (typeof configOrPvP === 'boolean') {
+      this.config = {
+        ...DEFAULT_MATCH_CONFIG,
+        balancedPvP: configOrPvP,
+        mapPreset: legacyPreset ?? 'canyon',
+      };
+    } else {
+      this.config = {
+        ...DEFAULT_MATCH_CONFIG,
+        ...(configOrPvP ?? {}),
+      };
+    }
+
+    this.rng = createSeededRng(this.config.seed);
+    this.fogEnabled = this.config.fogOfWar;
+    this.localFaction = this.config.hostFaction;
+    this.map = generateMap(this.config.mapPreset);
+
+    const startCreds = this.config.startingCredits;
     this.players = {
-      allies: this.createPlayer('allies', 5000),
-      soviets: this.createPlayer('soviets', balancedPvP ? 5000 : 4500),
+      allies: this.createPlayer('allies', startCreds),
+      soviets: this.createPlayer('soviets', this.config.balancedPvP ? startCreds : Math.round(startCreds * 0.9)),
     };
 
     for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
@@ -90,7 +125,7 @@ export class GameWorld {
     }
 
     this.setupMapObjectives();
-    this.setupInitialBases(balancedPvP);
+    this.setupInitialBases(this.config.balancedPvP);
     this.recomputePower('allies', true);
     this.recomputePower('soviets', true);
     this.syncSuperweaponUnlocks('allies', true);
@@ -109,6 +144,7 @@ export class GameWorld {
       unitProd: null,
       superweapons: {
         airstrike: { unlocked: false, cooldown: AIRSTRIKE_COOLDOWN * 0.45, maxCooldown: AIRSTRIKE_COOLDOWN },
+        chronoshift: { unlocked: false, cooldown: CHRONOSHIFT_COOLDOWN * 0.65, maxCooldown: CHRONOSHIFT_COOLDOWN },
         iron_curtain: { unlocked: false, cooldown: IRON_CURTAIN_COOLDOWN * 0.4, maxCooldown: IRON_CURTAIN_COOLDOWN },
         nuke: { unlocked: false, cooldown: NUKE_COOLDOWN * 0.75, maxCooldown: NUKE_COOLDOWN },
       },
@@ -122,7 +158,6 @@ export class GameWorld {
   }
 
   private setupMapObjectives(): void {
-    // Spawn neutral Tech Oil Derricks on map flanks
     for (const spot of this.map.derrickSpots) {
       const y = sampleTerrainHeight(this.map, spot.x, spot.z);
       const id = this.nextId++;
@@ -138,8 +173,9 @@ export class GameWorld {
       });
     }
 
-    // Drop 1 tempting starter Bonus Crate near the central crossroads!
-    this.spawnCrateAt(WORLD_SIZE * 0.5 + 4, WORLD_SIZE * 0.5 - 4, 'cash');
+    if (this.config.cratesEnabled) {
+      this.spawnCrateAt(WORLD_SIZE * 0.5 + 4, WORLD_SIZE * 0.5 - 4, 'cash');
+    }
   }
 
   private setupInitialBases(balancedPvP: boolean): void {
@@ -181,11 +217,18 @@ export class GameWorld {
     if (balancedPvP) {
       this.spawnUnit('rifle', 'soviets', sovRally.x - 3, sovRally.z - 1);
     } else {
-      this.spawnBuilding('power', 'soviets', sx + 4, sz + 2, true);
-      this.spawnBuilding('tesla', 'soviets', sx - 4, sz + 9, true);
+      // Give the AI opponent faction a slight defensive head start + center scout patrol
+      const aiFaction: Faction = this.config.hostFaction === 'allies' ? 'soviets' : 'allies';
+      if (aiFaction === 'soviets') {
+        this.spawnBuilding('power', 'soviets', sx + 4, sz + 2, true);
+        this.spawnBuilding('tesla', 'soviets', sx - 4, sz + 9, true);
+      } else {
+        this.spawnBuilding('power', 'allies', ax - 4, az - 2, true);
+        this.spawnBuilding('prism', 'allies', ax + 4, az - 9, true);
+      }
       const mid = tileToWorld(38, 35);
-      this.spawnUnit('rifle', 'soviets', mid.x, mid.z);
-      this.spawnUnit('medium_tank', 'soviets', mid.x + 3, mid.z - 3);
+      this.spawnUnit('rifle', aiFaction, mid.x, mid.z);
+      this.spawnUnit('medium_tank', aiFaction, mid.x + 3, mid.z - 3);
     }
   }
 
@@ -194,6 +237,19 @@ export class GameWorld {
     const out = this.events;
     this.events = [];
     return out;
+  }
+
+  canFactionBuild(faction: Faction, type: BuildingType): boolean {
+    const spec = BUILDING_SPECS[type];
+    if (spec.factions && !spec.factions.includes(faction)) return false;
+    if (spec.isSuperweaponStructure && !this.config.superweaponsEnabled) return false;
+    return true;
+  }
+
+  canFactionTrain(faction: Faction, type: UnitType): boolean {
+    const spec = UNIT_SPECS[type];
+    if (spec.factions && !spec.factions.includes(faction)) return false;
+    return true;
   }
 
   hasPrerequisites(faction: Faction, requires: BuildingType[]): boolean {
@@ -230,6 +286,7 @@ export class GameWorld {
     const halfW = fw * TILE_SIZE * 0.5 + 0.6;
     const halfH = fh * TILE_SIZE * 0.5 + 0.6;
     for (const u of this.units.values()) {
+      if (UNIT_SPECS[u.type].isAir) continue;
       if (Math.abs(u.x - cx) < halfW && Math.abs(u.z - cz) < halfH) return false;
     }
 
@@ -360,6 +417,7 @@ export class GameWorld {
       kills: 0,
       rank: 0,
       invulnerableTimer: 0,
+      blinkCooldown: 0,
       order: type === 'harvester' ? { type: 'harvest' } : { type: 'idle' },
       path: [],
       pathIndex: 0,
@@ -368,7 +426,7 @@ export class GameWorld {
       recoil: 0,
       targetId: null,
       flashTimer: 0,
-      animPhase: Math.random() * Math.PI * 2,
+      animPhase: this.rng() * Math.PI * 2,
       cargo: 0,
       harvesterState: 'idle',
       harvestTarget: null,
@@ -386,6 +444,7 @@ export class GameWorld {
   startBuildingProduction(faction: Faction, type: BuildingType): boolean {
     const player = this.players[faction];
     const spec = BUILDING_SPECS[type];
+    if (!this.canFactionBuild(faction, type)) return false;
     if (!this.hasPrerequisites(faction, spec.requires)) return false;
     if (spec.maxCount && this.countFactionBuilding(faction, type) >= spec.maxCount) return false;
     if (player.buildingProd) return false;
@@ -447,7 +506,6 @@ export class GameWorld {
     this.recomputePower(faction);
     this.syncSuperweaponUnlocks(faction);
 
-    // Classic Red Alert: selling a structure pops out a surviving Rifle Squad!
     this.spawnUnit('rifle', faction, b.x, b.z);
     this.events.push({
       type: 'building_sold',
@@ -480,18 +538,97 @@ export class GameWorld {
     return b.repairing;
   }
 
-  fireSuperweapon(faction: Faction, weapon: SuperweaponType, target: Vec2): boolean {
+  fireSuperweapon(faction: Faction, weapon: SuperweaponType, target: Vec2, source?: Vec2): boolean {
+    if (!this.config.superweaponsEnabled) return false;
     const p = this.players[faction];
     const sw = p.superweapons[weapon];
     if (!sw.unlocked || sw.cooldown > 0.05) return false;
-    if (weapon === 'nuke' && p.powerRatio < 1) {
-      this.emitEva(faction, 'low_power', 'Nuclear Silo offline — Low Power!');
+    if ((weapon === 'nuke' || weapon === 'chronoshift') && p.powerRatio < 1) {
+      this.emitEva(
+        faction,
+        'low_power',
+        weapon === 'nuke' ? 'Nuclear Silo offline — Low Power!' : 'Chronosphere offline — Low Power!'
+      );
       return false;
     }
 
-    sw.cooldown = sw.maxCooldown;
     const tx = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, target.x));
     const tz = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, target.z));
+
+    if (weapon === 'chronoshift') {
+      const src = source ?? target;
+      const sx = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, src.x));
+      const sz = Math.max(TILE_SIZE * 2, Math.min(WORLD_SIZE - TILE_SIZE * 2, src.z));
+      const destTile = worldToTile(tx, tz);
+      if (this.blocked[destTile.gz * MAP_SIZE + destTile.gx]) {
+        this.emitEva(faction, 'cannot_deploy', 'Cannot Chronoshift onto impassable terrain!');
+        return false;
+      }
+
+      const candidates: UnitEntity[] = [];
+      for (const u of this.units.values()) {
+        if (u.faction !== faction) continue;
+        if (Math.hypot(u.x - sx, u.z - sz) <= 9.0) {
+          candidates.push(u);
+          if (candidates.length >= 6) break;
+        }
+      }
+      if (candidates.length === 0) {
+        this.emitEva(faction, 'cannot_deploy', 'Chronoshift requires friendly units in source zone');
+        return false;
+      }
+
+      sw.cooldown = sw.maxCooldown;
+      const sy = sampleTerrainHeight(this.map, sx, sz);
+      const ty = sampleTerrainHeight(this.map, tx, tz);
+      const cols = Math.ceil(Math.sqrt(candidates.length));
+
+      candidates.forEach((u, idx) => {
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
+        const ox = (col - (cols - 1) * 0.5) * 2.5;
+        const oz = (row - (Math.ceil(candidates.length / cols) - 1) * 0.5) * 2.5;
+        const nx = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, tx + ox));
+        const nz = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, tz + oz));
+        const nt = worldToTile(nx, nz);
+        if (!this.blocked[nt.gz * MAP_SIZE + nt.gx] || UNIT_SPECS[u.type].isAir) {
+          u.x = nx;
+          u.z = nz;
+        } else {
+          u.x = tx;
+          u.z = tz;
+        }
+        u.prevX = u.x;
+        u.prevZ = u.z;
+        u.y = sampleTerrainHeight(this.map, u.x, u.z);
+        u.path = [];
+        u.order = { type: 'idle' };
+      });
+
+      this.events.push({
+        type: 'chrono_warp',
+        faction,
+        fromX: sx,
+        fromY: sy,
+        fromZ: sz,
+        toX: tx,
+        toY: ty,
+        toZ: tz,
+        count: candidates.length,
+      });
+      this.events.push({
+        type: 'floating_text',
+        faction: 'all',
+        text: `CHRONOSHIFT (${candidates.length} UNITS)`,
+        color: '#38e8ff',
+        x: tx,
+        y: ty + 3.4,
+        z: tz,
+      });
+      this.emitEva('allies', 'chronoshift', 'Chronosphere activated!');
+      this.emitEva('soviets', 'chronoshift', 'Warning: Chronosphere detected!');
+      return true;
+    }
 
     if (weapon === 'iron_curtain') {
       let affected = 0;
@@ -504,11 +641,10 @@ export class GameWorld {
         }
       }
       if (affected === 0) {
-        // Refund cooldown if user clicked empty ground!
-        sw.cooldown = 0;
         this.emitEva(faction, 'cannot_deploy', 'Iron Curtain needs friendly units in target zone');
         return false;
       }
+      sw.cooldown = sw.maxCooldown;
       this.events.push({
         type: 'iron_curtain_cast',
         faction,
@@ -530,6 +666,7 @@ export class GameWorld {
       return true;
     }
 
+    sw.cooldown = sw.maxCooldown;
     const id = this.nextId++;
     if (weapon === 'airstrike') {
       const angle = faction === 'allies' ? -Math.PI * 0.25 : Math.PI * 0.75;
@@ -584,6 +721,7 @@ export class GameWorld {
   queueUnitProduction(faction: Faction, type: UnitType): boolean {
     const player = this.players[faction];
     const spec = UNIT_SPECS[type];
+    if (!this.canFactionTrain(faction, type)) return false;
     if (!this.hasPrerequisites(faction, spec.requires)) return false;
 
     if (!player.unitProd) {
@@ -657,9 +795,47 @@ export class GameWorld {
         z: Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, target.z + offsetZ)),
       };
 
+      // Chrono Tank iconic Phase-Blink! Warps up to 16 units instantaneously on long move orders!
+      const spec = UNIT_SPECS[u.type];
+      if (spec.canPhaseBlink && u.blinkCooldown <= 0) {
+        const dx = dest.x - u.x;
+        const dz = dest.z - u.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 14) {
+          const jump = Math.min(dist, 16);
+          const bx = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, u.x + (dx / dist) * jump));
+          const bz = Math.max(TILE_SIZE * 1.5, Math.min(WORLD_SIZE - TILE_SIZE * 1.5, u.z + (dz / dist) * jump));
+          const bt = worldToTile(bx, bz);
+          if (!this.blocked[bt.gz * MAP_SIZE + bt.gx]) {
+            const oldX = u.x;
+            const oldY = u.y;
+            const oldZ = u.z;
+            u.x = bx;
+            u.z = bz;
+            u.prevX = bx;
+            u.prevZ = bz;
+            u.y = sampleTerrainHeight(this.map, bx, bz);
+            u.angle = Math.atan2(dx, dz);
+            u.turretAngle = u.angle;
+            u.blinkCooldown = 12.0;
+            this.events.push({
+              type: 'chrono_warp',
+              faction: u.faction,
+              fromX: oldX,
+              fromY: oldY,
+              fromZ: oldZ,
+              toX: bx,
+              toY: u.y,
+              toZ: bz,
+              count: 1,
+            });
+          }
+        }
+      }
+
       u.order = attackMove ? { type: 'attack_move', target: dest } : { type: 'move', target: dest };
       u.targetId = null;
-      u.path = UNIT_SPECS[u.type].isAir
+      u.path = spec.isAir
         ? [dest]
         : findPath({ x: u.x, z: u.z }, dest, this.blocked);
       u.pathIndex = 0;
@@ -730,6 +906,7 @@ export class GameWorld {
   tick(dt: number): void {
     if (this.winner) return;
     this.simTime += dt;
+    this.tickCount++;
 
     this.updateProduction('allies', dt);
     this.updateProduction('soviets', dt);
@@ -741,7 +918,9 @@ export class GameWorld {
     this.updateUnits(dt);
     this.updateProjectiles(dt);
     this.updateDerricks(dt);
-    this.updateCrates(dt);
+    if (this.config.cratesEnabled) {
+      this.updateCrates(dt);
+    }
     this.updateOreRegrowth(dt);
 
     this.fogTickCounter++;
@@ -788,40 +967,55 @@ export class GameWorld {
 
   private syncSuperweaponUnlocks(faction: Faction, silent = false): void {
     const p = this.players[faction];
-    const hasTech = this.countFactionBuilding(faction, 'techcenter') > 0;
-    const hasSilo = this.countFactionBuilding(faction, 'silo') > 0;
+    const enabled = this.config.superweaponsEnabled;
+    const hasTech = enabled && this.countFactionBuilding(faction, 'techcenter') > 0;
+    const hasChrono = enabled && this.countFactionBuilding(faction, 'chronosphere') > 0;
+    const hasSilo = enabled && this.countFactionBuilding(faction, 'silo') > 0;
 
-    if (hasTech && !p.superweapons.airstrike.unlocked && !silent) {
-      this.emitEva(faction, 'building', 'Tech Center online — Air Strike charging');
+    if (faction === 'allies') {
+      if (hasTech && !p.superweapons.airstrike.unlocked && !silent) {
+        this.emitEva(faction, 'building', 'Tech Center online — Air Strike charging');
+      }
+      if (hasChrono && !p.superweapons.chronoshift.unlocked && !silent) {
+        this.emitEva(faction, 'building', 'Chronosphere online — Spacetime capacitors charging');
+      }
+      p.superweapons.airstrike.unlocked = hasTech;
+      p.superweapons.chronoshift.unlocked = hasChrono;
+      p.superweapons.iron_curtain.unlocked = false;
+      p.superweapons.nuke.unlocked = false;
+    } else {
+      if (hasTech && !p.superweapons.iron_curtain.unlocked && !silent) {
+        this.emitEva(faction, 'building', 'Tech Center online — Iron Curtain charging');
+      }
+      if (hasSilo && !p.superweapons.nuke.unlocked && !silent) {
+        this.emitEva(faction, 'building', 'Nuclear Silo online — Warhead arming');
+      }
+      p.superweapons.iron_curtain.unlocked = hasTech;
+      p.superweapons.nuke.unlocked = hasSilo;
+      p.superweapons.airstrike.unlocked = false;
+      p.superweapons.chronoshift.unlocked = false;
     }
-    if (hasSilo && !p.superweapons.nuke.unlocked && !silent) {
-      this.emitEva(faction, 'building', 'Nuclear Silo online — Warhead arming');
-    }
-
-    p.superweapons.airstrike.unlocked = hasTech;
-    p.superweapons.iron_curtain.unlocked = hasTech;
-    p.superweapons.nuke.unlocked = hasSilo;
   }
 
   private updateSuperweapons(faction: Faction, dt: number): void {
     const p = this.players[faction];
     const rate = p.powerRatio >= 1 ? 1.0 : 0.3;
 
-    for (const key of ['airstrike', 'iron_curtain', 'nuke'] as const) {
+    for (const key of ['airstrike', 'chronoshift', 'iron_curtain', 'nuke'] as const) {
       const sw = p.superweapons[key];
       if (!sw.unlocked || sw.cooldown <= 0) continue;
       const prev = sw.cooldown;
       sw.cooldown = Math.max(0, sw.cooldown - dt * rate);
       if (prev > 0 && sw.cooldown === 0) {
-        this.emitEva(
-          faction,
-          'superweapon_ready',
+        const msg =
           key === 'nuke'
             ? 'Nuclear Missile Ready!'
+            : key === 'chronoshift'
+            ? 'Chronosphere Ready!'
             : key === 'iron_curtain'
             ? 'Iron Curtain Ready!'
-            : 'A-10 Air Strike Ready!'
-        );
+            : 'A-10 Air Strike Ready!';
+        this.emitEva(faction, 'superweapon_ready', msg);
       }
     }
   }
@@ -832,7 +1026,6 @@ export class GameWorld {
       s.elapsed += dt;
 
       if (s.type === 'airstrike') {
-        // Carpet-bomb 6 explosions along a 16-unit run across the target
         const bombWindowStart = 1.45;
         const bombInterval = 0.2;
         const expectedBombs = Math.min(
@@ -842,8 +1035,8 @@ export class GameWorld {
         while (s.bombsDropped < expectedBombs) {
           const idx = s.bombsDropped++;
           const offset = (idx - 2.5) * 3.2;
-          const bx = s.targetX + Math.sin(s.angle) * offset + (Math.random() - 0.5) * 1.6;
-          const bz = s.targetZ + Math.cos(s.angle) * offset + (Math.random() - 0.5) * 1.6;
+          const bx = s.targetX + Math.sin(s.angle) * offset + (this.rng() - 0.5) * 1.6;
+          const bz = s.targetZ + Math.cos(s.angle) * offset + (this.rng() - 0.5) * 1.6;
           const by = sampleTerrainHeight(this.map, bx, bz);
 
           this.events.push({
@@ -878,7 +1071,6 @@ export class GameWorld {
           shake: 1.8,
         });
 
-        // Catastrophic blast radius + lingering nuclear fallout zone!
         this.applyAreaDamage(s.targetX, s.targetZ, 14.5, 680, 'nuke', s.faction, null, true);
 
         const fid = this.nextId++;
@@ -892,9 +1084,7 @@ export class GameWorld {
         });
       }
 
-      if (s.elapsed >= s.duration) {
-        finished.push(s.id);
-      }
+      if (s.elapsed >= s.duration) finished.push(s.id);
     }
 
     for (const id of finished) this.pendingStrikes.delete(id);
@@ -908,7 +1098,6 @@ export class GameWorld {
         expired.push(fz.id);
         continue;
       }
-      // Radiation slowly cooks units standing inside the fallout crater
       for (const u of this.units.values()) {
         if (Math.hypot(u.x - fz.x, u.z - fz.z) <= fz.radius) {
           this.applyDamage(u, 22 * dt, 'nuke', fz.faction, null);
@@ -920,7 +1109,6 @@ export class GameWorld {
 
   private updateDerricks(dt: number): void {
     for (const d of this.derricks.values()) {
-      // Passive income for owner
       if (d.owner) {
         d.incomeTimer += dt;
         if (d.incomeTimer >= 2.0) {
@@ -940,11 +1128,10 @@ export class GameWorld {
         }
       }
 
-      // Check nearby ground units for capturing
       let alliesNear = 0;
       let sovietsNear = 0;
       for (const u of this.units.values()) {
-        if (u.type === 'harvester') continue;
+        if (u.type === 'harvester' || UNIT_SPECS[u.type].isAir) continue;
         if (Math.hypot(u.x - d.x, u.z - d.z) <= 6.2) {
           if (u.faction === 'allies') alliesNear++;
           else sovietsNear++;
@@ -992,7 +1179,7 @@ export class GameWorld {
 
   private spawnCrateAt(wx: number, wz: number, forceKind?: CrateKind): void {
     const kinds: CrateKind[] = ['cash', 'veterancy', 'heal', 'reinforcement'];
-    const kind = forceKind ?? kinds[Math.floor(Math.random() * kinds.length)];
+    const kind = forceKind ?? kinds[Math.floor(this.rng() * kinds.length)];
     const y = sampleTerrainHeight(this.map, wx, wz);
     const id = this.nextId++;
     this.crates.set(id, { id, x: wx, y, z: wz, kind });
@@ -1002,10 +1189,9 @@ export class GameWorld {
     this.crateSpawnTimer -= dt;
     if (this.crateSpawnTimer <= 0 && this.crates.size < 3) {
       this.crateSpawnTimer = 34;
-      // Pick a random walkable non-base tile in the middle 65% of the map
       for (let attempt = 0; attempt < 25; attempt++) {
-        const gx = Math.floor(14 + Math.random() * (MAP_SIZE - 28));
-        const gz = Math.floor(14 + Math.random() * (MAP_SIZE - 28));
+        const gx = Math.floor(14 + this.rng() * (MAP_SIZE - 28));
+        const gz = Math.floor(14 + this.rng() * (MAP_SIZE - 28));
         const idx = gz * MAP_SIZE + gx;
         if (!this.blocked[idx] && this.map.walkable[idx]) {
           const w = tileToWorld(gx, gz);
@@ -1018,6 +1204,7 @@ export class GameWorld {
     const pickedIds: number[] = [];
     for (const c of this.crates.values()) {
       for (const u of this.units.values()) {
+        if (UNIT_SPECS[u.type].isAir) continue;
         if (Math.hypot(u.x - c.x, u.z - c.z) <= 2.3) {
           pickedIds.push(c.id);
           this.applyCrateEffect(c, u);
@@ -1056,7 +1243,14 @@ export class GameWorld {
       label = 'CRATE: SQUAD REPAIRED!';
       color = '#3bf095';
     } else {
-      const bonusType: UnitType = Math.random() > 0.4 ? 'medium_tank' : 'tesla_trooper';
+      const bonusType: UnitType =
+        u.faction === 'allies'
+          ? this.rng() > 0.45
+            ? 'medium_tank'
+            : 'chrono_tank'
+          : this.rng() > 0.45
+          ? 'medium_tank'
+          : 'tesla_trooper';
       this.spawnUnit(bonusType, u.faction, c.x + 1.5, c.z - 1.5);
       label = `CRATE: FREE ${UNIT_SPECS[bonusType].shortName.toUpperCase()}!`;
       color = '#60a5fa';
@@ -1173,7 +1367,6 @@ export class GameWorld {
               this.issueMoveOrder([unit.id], producer.rallyPoint, true);
             }
             if (spec.id === 'kirov') {
-              // Iconic global Kirov warning!
               this.emitEva('allies', 'kirov_reporting', 'Kirov reporting!');
               this.emitEva('soviets', 'kirov_reporting', 'Kirov reporting!');
             } else {
@@ -1218,7 +1411,6 @@ export class GameWorld {
 
       const spec = BUILDING_SPECS[b.type];
 
-      // Active building Repair (drains credits smoothly like classic C&C)
       if (b.repairing) {
         if (b.hp >= b.maxHp - 0.5) {
           b.hp = b.maxHp;
@@ -1230,7 +1422,7 @@ export class GameWorld {
           if (p.credits >= repairCost) {
             p.credits -= repairCost;
             b.hp += healAmt;
-            if (Math.random() < 0.22) {
+            if (this.rng() < 0.22) {
               this.events.push({ type: 'harvest_spark', x: b.x, y: b.y + 1.8, z: b.z });
             }
           } else {
@@ -1265,12 +1457,16 @@ export class GameWorld {
 
         if (b.attackCooldown <= 0) {
           const aimDiff = Math.abs(wrapAngle(desiredAngle - b.turretAngle));
-          if (spec.weapon.damageType === 'tesla' || aimDiff < 0.25) {
+          if (
+            spec.weapon.damageType === 'tesla' ||
+            spec.weapon.damageType === 'prism' ||
+            aimDiff < 0.25
+          ) {
             this.fireWeapon(
               b.faction,
               null,
               b.x,
-              b.y + (b.type === 'tesla' ? 4.3 : 1.7),
+              b.y + (b.type === 'tesla' || b.type === 'prism' ? 4.35 : 1.7),
               b.z,
               target,
               spec.weapon.damage,
@@ -1278,7 +1474,8 @@ export class GameWorld {
               spec.weapon.projectileSpeed,
               spec.weapon.splashRadius ?? 0,
               0.7,
-              false
+              false,
+              spec.weapon.chainBounceRange ?? 0
             );
             b.attackCooldown = spec.weapon.cooldown;
           }
@@ -1295,13 +1492,13 @@ export class GameWorld {
       u.prevZ = u.z;
       if (u.flashTimer > 0) u.flashTimer = Math.max(0, u.flashTimer - dt);
       if (u.invulnerableTimer > 0) u.invulnerableTimer = Math.max(0, u.invulnerableTimer - dt);
+      if (u.blinkCooldown > 0) u.blinkCooldown = Math.max(0, u.blinkCooldown - dt);
       if (u.attackCooldown > 0) u.attackCooldown = Math.max(0, u.attackCooldown - dt);
       if (u.recoil > 0) u.recoil = Math.max(0, u.recoil - dt * 4.5);
       if (u.repathTimer > 0) u.repathTimer = Math.max(0, u.repathTimer - dt);
 
       const spec = UNIT_SPECS[u.type];
 
-      // Mammoth Tank self-repair up to 50% HP, and Elite (★★★) units self-repair to 100%!
       if (u.rank === 2 && u.hp < u.maxHp) {
         u.hp = Math.min(u.maxHp, u.hp + 12 * dt);
       } else if (u.type === 'mammoth_tank' && u.hp < u.maxHp * 0.5) {
@@ -1344,7 +1541,6 @@ export class GameWorld {
       let sepZ = 0;
       for (const other of unitArr) {
         if (other.id === u.id) continue;
-        // Air units only separate from other air units; ground units only from ground
         if (!!UNIT_SPECS[other.type].isAir !== !!spec.isAir) continue;
         const dx = u.x - other.x;
         const dz = u.z - other.z;
@@ -1376,7 +1572,6 @@ export class GameWorld {
       const nextZ = Math.max(TILE_SIZE, Math.min(WORLD_SIZE - TILE_SIZE, u.z + u.vz * dt));
 
       if (spec.isAir) {
-        // Kirov Airship glides smoothly over all cliffs, mesas, and structures!
         u.x = nextX;
         u.z = nextZ;
       } else {
@@ -1472,9 +1667,7 @@ export class GameWorld {
       return;
     }
 
-    if (weapon.minRange && dist < weapon.minRange) {
-      return;
-    }
+    if (weapon.minRange && dist < weapon.minRange) return;
 
     if (u.order.type === 'attack' || u.order.type === 'attack_move') {
       u.path = [];
@@ -1494,11 +1687,20 @@ export class GameWorld {
     if (u.attackCooldown <= 0 && (spec.isAir || aimDiff < 0.24)) {
       const muzzleY =
         u.y +
-        (spec.isAir ? 6.8 : u.type === 'v2_launcher' ? 2.1 : spec.armor === 'infantry' ? 0.9 : 1.35);
+        (spec.isAir
+          ? 6.8
+          : u.type === 'v2_launcher'
+          ? 2.1
+          : u.type === 'prism_tank'
+          ? 1.75
+          : spec.armor === 'infantry'
+          ? 0.9
+          : 1.35);
       const muzzleForward = spec.isAir ? 0 : spec.armor === 'infantry' ? 0.45 : 1.4;
       const fx = u.x + Math.sin(u.turretAngle) * muzzleForward;
       const fz = u.z + Math.cos(u.turretAngle) * muzzleForward;
       const arc = weapon.arcHeight ?? (weapon.damageType === 'rocket' ? 1.8 : 0.7);
+      const chainRange = weapon.chainBounceRange ?? 0;
 
       if (weapon.dualBarrel) {
         const perpX = Math.cos(u.turretAngle) * 0.42;
@@ -1515,7 +1717,8 @@ export class GameWorld {
           weapon.projectileSpeed,
           weapon.splashRadius ?? 0,
           arc,
-          eliteShot
+          eliteShot,
+          chainRange
         );
         this.fireWeapon(
           u.faction,
@@ -1529,7 +1732,8 @@ export class GameWorld {
           weapon.projectileSpeed,
           weapon.splashRadius ?? 0,
           arc,
-          eliteShot
+          eliteShot,
+          chainRange
         );
       } else {
         this.fireWeapon(
@@ -1544,7 +1748,8 @@ export class GameWorld {
           weapon.projectileSpeed,
           weapon.splashRadius ?? 0,
           arc,
-          eliteShot
+          eliteShot,
+          chainRange
         );
       }
 
@@ -1629,7 +1834,7 @@ export class GameWorld {
       u.cargo += mined;
       u.animPhase += dt * 10;
 
-      if (Math.random() < 0.25) {
+      if (this.rng() < 0.25) {
         this.events.push({ type: 'harvest_spark', x: u.x, y: u.y + 0.5, z: u.z });
       }
 
@@ -1737,13 +1942,14 @@ export class GameWorld {
     z: number,
     maxRange: number,
     minRange = 0,
-    canTargetAir = false
+    canTargetAir = false,
+    excludeId?: number
   ): Entity | undefined {
     let best: Entity | undefined;
     let bestScore = Infinity;
 
     for (const u of this.units.values()) {
-      if (u.faction === faction) continue;
+      if (u.faction === faction || u.id === excludeId) continue;
       if (UNIT_SPECS[u.type].isAir && !canTargetAir) continue;
       const d = Math.hypot(u.x - x, u.z - z);
       if (d <= maxRange && d >= minRange) {
@@ -1756,7 +1962,7 @@ export class GameWorld {
     }
 
     for (const b of this.buildings.values()) {
-      if (b.faction === faction) continue;
+      if (b.faction === faction || b.id === excludeId) continue;
       const pad = Math.max(...BUILDING_SPECS[b.type].footprint) * TILE_SIZE * 0.45;
       const d = Math.hypot(b.x - x, b.z - z) - pad;
       if (d <= maxRange && d + pad >= minRange) {
@@ -1783,11 +1989,37 @@ export class GameWorld {
     projectileSpeed: number,
     splashRadius: number,
     arcHeight: number,
-    eliteShot: boolean
+    eliteShot: boolean,
+    chainBounceRange = 0
   ): void {
     const ty =
       target.y +
       (target.kind === 'building' ? 1.6 : UNIT_SPECS[target.type].isAir ? 7.6 : 0.9);
+
+    let bounceTarget: Entity | undefined;
+    let bounceTo: { x: number; y: number; z: number } | undefined;
+    if (damageType === 'prism' && chainBounceRange > 0) {
+      bounceTarget = this.findNearestEnemy(
+        faction,
+        target.x,
+        target.z,
+        chainBounceRange,
+        0,
+        true,
+        target.id
+      );
+      if (bounceTarget) {
+        const by =
+          bounceTarget.y +
+          (bounceTarget.kind === 'building'
+            ? 1.5
+            : UNIT_SPECS[bounceTarget.type].isAir
+            ? 7.6
+            : 0.9);
+        bounceTo = { x: bounceTarget.x, y: by, z: bounceTarget.z };
+      }
+    }
+
     this.events.push({
       type: 'shot',
       damageType,
@@ -1799,19 +2031,23 @@ export class GameWorld {
       toY: ty,
       toZ: target.z,
       eliteShot,
+      bounceTo,
     });
 
     if (projectileSpeed <= 0) {
       this.applyDamage(target, damage, damageType, faction, attackerId);
-      if (damageType === 'tesla') {
+      if (bounceTarget) {
+        this.applyDamage(bounceTarget, damage * 0.55, damageType, faction, attackerId);
+      }
+      if (damageType === 'tesla' || damageType === 'prism') {
         this.events.push({
           type: 'explosion',
           x: target.x,
           y: ty,
           z: target.z,
-          scale: 1.15,
-          damageType: 'tesla',
-          shake: 0.12,
+          scale: damageType === 'prism' ? 1.25 : 1.15,
+          damageType,
+          shake: 0.14,
         });
       }
       return;
@@ -1845,12 +2081,12 @@ export class GameWorld {
   private updateProjectiles(dt: number): void {
     const toRemove: number[] = [];
     for (const p of this.projectiles.values()) {
-      // Homing rockets (non-V2 ballistic) track targets
       if (p.damageType === 'rocket' && p.arcHeight < 4 && p.targetId) {
         const t = this.getEntity(p.targetId);
         if (t) {
           p.targetX = t.x;
-          p.targetY = t.y + (t.kind === 'building' ? 1.5 : 0.9);
+          p.targetY =
+            t.y + (t.kind === 'building' ? 1.5 : UNIT_SPECS[t.type].isAir ? 7.6 : 0.9);
           p.targetZ = t.z;
         }
       }
@@ -1950,10 +2186,7 @@ export class GameWorld {
     attackerFaction: Faction,
     attackerId: number | null
   ): void {
-    // Iron Curtain completely blocks all damage while active!
-    if (target.kind === 'unit' && target.invulnerableTimer > 0) {
-      return;
-    }
+    if (target.kind === 'unit' && target.invulnerableTimer > 0) return;
 
     const armor = target.kind === 'building' ? 'building' : UNIT_SPECS[target.type].armor;
     const mult = DAMAGE_MULTIPLIERS[damageType][armor];
@@ -1969,7 +2202,6 @@ export class GameWorld {
     }
 
     if (target.hp <= 0) {
-      // Award veterancy kill credit to attacker unit!
       if (attackerId !== null && target.faction !== attackerFaction) {
         const killer = this.units.get(attackerId);
         if (killer) {
@@ -1999,14 +2231,19 @@ export class GameWorld {
           y: target.y + 0.7,
           z: target.z,
           scale:
-            target.type === 'mammoth_tank'
+            target.type === 'mammoth_tank' || target.type === 'kirov'
               ? 2.2
               : UNIT_SPECS[target.type].armor === 'infantry'
               ? 0.55
               : 1.5,
           damageType: 'shell',
           leaveCrater: UNIT_SPECS[target.type].armor !== 'infantry',
-          shake: target.type === 'mammoth_tank' ? 0.55 : UNIT_SPECS[target.type].armor === 'infantry' ? 0 : 0.22,
+          shake:
+            target.type === 'mammoth_tank' || target.type === 'kirov'
+              ? 0.55
+              : UNIT_SPECS[target.type].armor === 'infantry'
+              ? 0
+              : 0.22,
         });
       } else {
         this.destroyBuilding(target, attackerFaction);
@@ -2161,7 +2398,7 @@ export class GameWorld {
         this.cancelUnitProduction(faction, cmd.unitType);
         break;
       case 'fire_superweapon':
-        this.fireSuperweapon(faction, cmd.weapon, cmd.target);
+        this.fireSuperweapon(faction, cmd.weapon, cmd.target, cmd.source);
         break;
     }
   }
@@ -2175,20 +2412,21 @@ export class GameWorld {
     return {
       mapPreset: this.map.preset,
       simTime: this.simTime,
+      tickCount: this.tickCount,
       winner: this.winner,
       players: {
         allies: structuredClone(this.players.allies),
         soviets: structuredClone(this.players.soviets),
       },
-      buildings: Array.from(this.buildings.values()),
+      buildings: Array.from(this.buildings.values()).map((b) => ({ ...b })),
       units: Array.from(this.units.values()).map((u) => ({
         ...u,
         path: [],
       })),
-      projectiles: Array.from(this.projectiles.values()),
-      crates: Array.from(this.crates.values()),
-      derricks: Array.from(this.derricks.values()),
-      falloutZones: Array.from(this.falloutZones.values()),
+      projectiles: Array.from(this.projectiles.values()).map((p) => ({ ...p })),
+      crates: Array.from(this.crates.values()).map((c) => ({ ...c })),
+      derricks: Array.from(this.derricks.values()).map((d) => ({ ...d })),
+      falloutZones: Array.from(this.falloutZones.values()).map((f) => ({ ...f })),
       oreUpdates,
       events,
     };
@@ -2196,6 +2434,7 @@ export class GameWorld {
 
   applySnapshot(snap: WorldSnapshot): void {
     this.simTime = snap.simTime;
+    this.tickCount = snap.tickCount;
     this.winner = snap.winner;
     this.players.allies = snap.players.allies;
     this.players.soviets = snap.players.soviets;

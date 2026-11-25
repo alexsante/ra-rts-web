@@ -86,6 +86,7 @@ export class GameRenderer {
   private swReticleGroup = new THREE.Group();
   private swReticleOuter: THREE.Mesh;
   private swReticleInner: THREE.Mesh;
+  private chronoSourceRing: THREE.Mesh;
 
   private rallyFlag: THREE.Group;
 
@@ -196,6 +197,20 @@ export class GameRenderer {
     this.swReticleGroup.add(this.swReticleOuter, this.swReticleInner);
     this.swReticleGroup.visible = false;
     this.scene.add(this.swReticleGroup);
+
+    // Locked Chronoshift source squad zone marker
+    this.chronoSourceRing = new THREE.Mesh(
+      new THREE.RingGeometry(8.4, 9.2, 44).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0x38e8ff,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    this.chronoSourceRing.visible = false;
+    this.scene.add(this.chronoSourceRing);
 
     // Rally flag
     this.rallyFlag = new THREE.Group();
@@ -406,19 +421,48 @@ export class GameRenderer {
     return ids;
   }
 
-  updateSuperweaponReticle(weapon: SuperweaponType | null, worldPos: THREE.Vector3 | null): void {
+  updateSuperweaponReticle(
+    weapon: SuperweaponType | null,
+    worldPos: THREE.Vector3 | null,
+    chronoSource?: Vec2 | null,
+    world?: GameWorld
+  ): void {
     if (!weapon || !worldPos) {
       this.swReticleGroup.visible = false;
+      this.chronoSourceRing.visible = false;
       return;
     }
-    const radius = weapon === 'nuke' ? 14.5 : weapon === 'iron_curtain' ? 8.0 : 8.5;
-    const col = weapon === 'nuke' ? 0xff2a2a : weapon === 'iron_curtain' ? 0xe11d48 : 0xf59e0b;
+    const radius =
+      weapon === 'nuke'
+        ? 14.5
+        : weapon === 'chronoshift'
+        ? 9.0
+        : weapon === 'iron_curtain'
+        ? 8.0
+        : 8.5;
+    const col =
+      weapon === 'nuke'
+        ? 0xff2a2a
+        : weapon === 'chronoshift'
+        ? 0x38e8ff
+        : weapon === 'iron_curtain'
+        ? 0xe11d48
+        : 0xf59e0b;
     (this.swReticleOuter.material as THREE.MeshBasicMaterial).color.setHex(col);
     (this.swReticleInner.material as THREE.MeshBasicMaterial).color.setHex(col);
     this.swReticleGroup.position.set(worldPos.x, worldPos.y + 0.25, worldPos.z);
     const pulse = 1 + Math.sin(this.elapsed * 8) * 0.04;
     this.swReticleGroup.scale.setScalar(radius * pulse);
     this.swReticleGroup.visible = true;
+
+    if (weapon === 'chronoshift' && chronoSource && world) {
+      const sy = sampleTerrainHeight(world.map, chronoSource.x, chronoSource.z);
+      this.chronoSourceRing.position.set(chronoSource.x, sy + 0.26, chronoSource.z);
+      this.chronoSourceRing.scale.setScalar(1 + Math.sin(this.elapsed * 10) * 0.04);
+      this.chronoSourceRing.visible = true;
+    } else {
+      this.chronoSourceRing.visible = false;
+    }
   }
 
   updatePlacementPreview(
@@ -494,7 +538,7 @@ export class GameRenderer {
         this.placementRangeRing = new THREE.Mesh(
           rangeGeo,
           new THREE.MeshBasicMaterial({
-            color: type === 'tesla' ? 0x38d9ff : 0xf5b82e,
+            color: type === 'tesla' || type === 'prism' ? 0x38d9ff : 0xf5b82e,
             transparent: true,
             opacity: 0.55,
             side: THREE.DoubleSide,
@@ -559,7 +603,8 @@ export class GameRenderer {
           ev.toX,
           ev.toY,
           ev.toZ,
-          ev.eliteShot
+          ev.eliteShot,
+          ev.bounceTo
         );
       } else if (ev.type === 'explosion') {
         this.vfx.spawnExplosion(
@@ -585,6 +630,16 @@ export class GameRenderer {
       } else if (ev.type === 'iron_curtain_cast') {
         this.vfx.spawnGroundPing(ev.x, ev.y, ev.z, 0xff2255);
         this.vfx.addShake(0.35);
+      } else if (ev.type === 'chrono_warp') {
+        this.vfx.spawnChronoWarp(
+          ev.fromX,
+          ev.fromY,
+          ev.fromZ,
+          ev.toX,
+          ev.toY,
+          ev.toZ,
+          ev.count
+        );
       } else if (ev.type === 'unit_destroyed') {
         if (UNIT_SPECS[ev.unitType].armor !== 'infantry') {
           this.vfx.spawnWreckage(
@@ -697,7 +752,7 @@ export class GameRenderer {
           new THREE.PlaneGeometry(2.6, 0.24),
           new THREE.MeshBasicMaterial({ color: 0x11151b, depthTest: false })
         );
-        hpBarBg.position.y = b.type === 'tesla' ? 5.1 : 3.8;
+        hpBarBg.position.y = b.type === 'tesla' || b.type === 'prism' ? 5.1 : 3.8;
         hpBarBg.renderOrder = 10;
         hpBarBg.visible = false;
         handle.root.add(hpBarBg);
@@ -733,6 +788,25 @@ export class GameRenderer {
           }
         } else if (b.type === 'conyard') {
           vis.animatedPart.rotation.y = Math.sin(this.elapsed * 0.9) * 0.65;
+        } else if (b.type === 'prism') {
+          vis.animatedPart.rotation.y = this.elapsed * (b.powered ? 2.4 : 0.35);
+          vis.animatedPart.position.y = 4.35 + (b.powered ? Math.sin(this.elapsed * 4.2) * 0.1 : 0);
+          if (b.powered && Math.random() < 0.06) {
+            this.vfx.spawnTeslaAmbientSpark(b.x, b.y + 4.35, b.z);
+          }
+        } else if (b.type === 'chronosphere') {
+          const sw = world.players[b.faction].superweapons.chronoshift;
+          const charge = 1 - Math.min(1, sw.cooldown / sw.maxCooldown);
+          const spin = b.powered ? 1.1 + charge * 4.5 : 0.2;
+          vis.animatedPart.rotation.y = this.elapsed * spin;
+          vis.animatedPart.rotation.x = Math.sin(this.elapsed * 0.9) * 0.25;
+          if (vis.secondaryAnimatedPart) {
+            vis.secondaryAnimatedPart.rotation.y = -this.elapsed * spin * 1.35;
+            vis.secondaryAnimatedPart.rotation.z = this.elapsed * spin * 0.8;
+          }
+          if (b.powered && charge > 0.7 && Math.random() < 0.08) {
+            this.vfx.spawnTeslaAmbientSpark(b.x, b.y + 2.65, b.z);
+          }
         } else if (b.type === 'tesla') {
           const pulse = b.powered ? 1.0 + Math.sin(this.elapsed * 9) * 0.14 : 0.72;
           vis.animatedPart.scale.setScalar(pulse);
@@ -848,6 +922,8 @@ export class GameRenderer {
       if (vis.propellers) {
         for (const p of vis.propellers) p.rotation.z = this.elapsed * 18;
         vis.hull.position.y = Math.sin(this.elapsed * 1.8 + u.id) * 0.35;
+      } else if (u.type === 'chrono_tank') {
+        vis.hull.position.y = 0.08 + Math.sin(this.elapsed * 5.2 + u.id) * 0.06;
       }
       if (vis.navStrobeMat) {
         vis.navStrobeMat.emissiveIntensity = Math.sin(this.elapsed * 7 + u.id) > 0.25 ? 2.8 : 0.25;
@@ -870,7 +946,9 @@ export class GameRenderer {
         vis.shieldDome.scale.setScalar(pulse);
       }
 
-      if (vis.turret) vis.turret.rotation.y = u.turretAngle;
+      if (vis.turret) {
+        vis.turret.rotation.y = vis.turretRelativeToHull ? u.turretAngle - u.angle : u.turretAngle;
+      }
       if (vis.barrel) vis.barrel.position.z = -u.recoil * 0.28;
 
       // Hide V2 missile on rail while reloading right after launch
@@ -1068,6 +1146,17 @@ export class GameRenderer {
     const ry = sampleTerrainHeight(world.map, b.rallyPoint.x, b.rallyPoint.z);
     this.rallyFlag.position.set(b.rallyPoint.x, ry, b.rallyPoint.z);
     this.rallyFlag.visible = true;
+  }
+
+  /**
+   * Hot-rebuilds all building & unit meshes when a custom `.glb` asset override is loaded or cleared.
+   */
+  refreshCustomModels(): void {
+    for (const vis of this.buildingVisuals.values()) this.scene.remove(vis.root);
+    this.buildingVisuals.clear();
+    for (const vis of this.unitVisuals.values()) this.scene.remove(vis.root);
+    this.unitVisuals.clear();
+    this.placementType = null;
   }
 
   rebuildForNewWorld(world: GameWorld): void {
