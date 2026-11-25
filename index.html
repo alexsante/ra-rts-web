@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RED ALERT // 3D Skirmish</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport-wrap">
+        <canvas id="game-canvas"></canvas>
+        <div id="selection-marquee"></div>
+        <div id="overlay-hud">
+          <div id="top-bar">
+            <div class="brand-badge">
+              <span class="brand-star">★</span>
+              <span class="brand-title">RED ALERT</span>
+              <span id="map-subtitle" class="brand-sub">CANYON PROTOCOL</span>
+              <span id="match-clock" class="match-clock">00:00</span>
+              <span id="empire-telemetry" class="empire-telemetry">ARMY 5 · OIL 0/2 · KILLS 0</span>
+            </div>
+            <div class="top-controls">
+              <select id="select-map" class="hud-select" title="Select Skirmish Map">
+                <option value="canyon">Map: Canyon</option>
+                <option value="arctic">Map: Arctic</option>
+                <option value="volcanic">Map: Volcanic</option>
+              </select>
+              <select id="select-ai" class="hud-select" title="Skirmish AI Difficulty">
+                <option value="easy">AI: Easy</option>
+                <option value="normal" selected>AI: Normal</option>
+                <option value="brutal">AI: Brutal</option>
+              </select>
+              <button id="btn-mp" class="hud-btn mp-btn" title="Host or Join 1v1 Multiplayer">1v1 Multiplayer</button>
+              <button id="btn-home" class="hud-btn" title="Jump to Base (H / Space)">Base</button>
+              <button id="btn-speed" class="hud-btn" title="Toggle Game Speed">1x</button>
+              <button id="btn-pause" class="hud-btn" title="Pause / Resume (P)">Pause</button>
+              <button id="btn-fog" class="hud-btn active" title="Toggle Fog of War (F)">Fog: ON</button>
+              <button id="btn-music" class="hud-btn" title="Industrial Synth Music">Music: OFF</button>
+              <button id="btn-audio" class="hud-btn active" title="Toggle SFX (M)">SFX: ON</button>
+              <button id="btn-help" class="hud-btn" title="Controls & Info (?)">?</button>
+            </div>
+          </div>
+
+          <div id="eva-banner" class="hidden"></div>
+
+          <!-- Left Superweapon Command Dock -->
+          <div id="superweapon-dock">
+            <button id="btn-sw-airstrike" class="sw-card locked" title="Unlocked by Tech Center">
+              <div class="sw-icon">✈</div>
+              <div class="sw-info">
+                <div class="sw-name">AIR STRIKE</div>
+                <div id="sw-airstrike-time" class="sw-timer">BUILD TECH</div>
+              </div>
+            </button>
+            <button id="btn-sw-iron" class="sw-card iron locked" title="Unlocked by Tech Center — 10s Invulnerability Shield">
+              <div class="sw-icon">🛡</div>
+              <div class="sw-info">
+                <div class="sw-name">IRON CURTAIN</div>
+                <div id="sw-iron-time" class="sw-timer">BUILD TECH</div>
+              </div>
+            </button>
+            <button id="btn-sw-nuke" class="sw-card nuke locked" title="Unlocked by Nuclear Silo">
+              <div class="sw-icon">☢</div>
+              <div class="sw-info">
+                <div class="sw-name">TACTICAL NUKE</div>
+                <div id="sw-nuke-time" class="sw-timer">BUILD SILO</div>
+              </div>
+            </button>
+          </div>
+
+          <!-- Compact Live 1v1 Chat Overlay (press Enter to type) -->
+          <div id="chat-box" class="hidden">
+            <div id="chat-log"></div>
+            <input id="chat-input" type="text" maxlength="140" placeholder="Press Enter to send to opponent..." />
+          </div>
+
+          <div id="bottom-bar">
+            <div class="bottom-left-stack">
+              <div class="quick-army-bar">
+                <button id="btn-sel-army" class="mini-btn" title="Select All Combat Units">All Combat</button>
+                <button id="btn-sel-idle" class="mini-btn" title="Select Idle Combat Units">Idle Army</button>
+                <button id="btn-sel-harv" class="mini-btn" title="Select Harvesters">Harvesters</button>
+              </div>
+              <div id="selection-panel"></div>
+            </div>
+            <div id="command-hint">
+              <span><b>LMB</b> Select / Box</span>
+              <span><b>RMB</b> Move / Attack</span>
+              <span><b>G / Shift+RMB</b> Attack-Move</span>
+              <span><b>R / V</b> Repair / Sell</span>
+              <span><b>WASD / Q-E</b> Cam</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="help-modal" class="modal hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h2>TACTICAL BRIEFING // CONTROLS</h2>
+              <button id="btn-close-help" class="hud-btn">✕</button>
+            </div>
+            <div class="modal-body">
+              <p class="briefing-lead">
+                Destroy all enemy structures to win! Capture neutral <strong class="amber-text">Tech Oil Derricks</strong> on the flanks for passive income, grab glowing <strong class="amber-text">Bonus Crates</strong>, build a <strong class="blue-text">Tech Center</strong> for V2 Artillery, Tesla Troopers, Mammoth Tanks &amp; Air Strikes, and construct a <strong class="red-text">Nuclear Silo</strong> to end the war!
+              </p>
+              <div class="controls-grid">
+                <div><strong>Left Click / Drag</strong></div><div>Select unit, building, or marquee box</div>
+                <div><strong>Double Click Unit</strong></div><div>Select all matching units on screen</div>
+                <div><strong>Right Click Ground</strong></div><div>Move in tactical formation</div>
+                <div><strong>Right Click Enemy</strong></div><div>Focus fire / Attack target</div>
+                <div><strong>G + Click / Shift+RMB</strong></div><div>Attack-Move (engage enemies along route)</div>
+                <div><strong>X</strong></div><div>Stop selected units</div>
+                <div><strong>R / V</strong></div><div>Toggle Building Repair / Sell cursor mode</div>
+                <div><strong>Ctrl + 1–5 / 1–5</strong></div><div>Assign / recall control groups</div>
+                <div><strong>WASD / Arrows / MMB</strong></div><div>Pan camera</div>
+                <div><strong>Q / E / Scroll</strong></div><div>Rotate camera / Zoom</div>
+                <div><strong>H or Space</strong></div><div>Center on Construction Yard</div>
+                <div><strong>Right Click Sidebar</strong></div><div>Cancel build &amp; refund spent credits</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="mp-modal" class="modal hidden">
+          <div class="modal-card mp-card">
+            <div class="modal-header">
+              <h2>1v1 MULTIPLAYER // COMMAND LINK</h2>
+              <button id="btn-close-mp" class="hud-btn">✕</button>
+            </div>
+            <div id="mp-status-pill" class="mp-status-pill">MODE: SOLO SKIRMISH (VS AI)</div>
+            <div id="mp-error" class="mp-error hidden"></div>
+
+            <div id="mp-lobby-idle" class="mp-section">
+              <p class="briefing-lead">
+                Host a 2-player match as <strong class="blue-text">Allies</strong> on the selected map and send the invite link to 1 opponent, who will automatically join as <strong class="red-text">Soviets</strong>.
+              </p>
+              <button id="btn-mp-host" class="primary-btn full-btn">HOST 1v1 MATCH &amp; GET INVITE LINK</button>
+              <div class="mp-divider"><span>OR JOIN WITH ROOM CODE</span></div>
+              <div class="mp-join-row">
+                <input id="mp-code-input" type="text" maxlength="8" placeholder="ROOM CODE (e.g. K7P4XM)" />
+                <button id="btn-mp-join" class="hud-btn join-btn">JOIN</button>
+              </div>
+            </div>
+
+            <div id="mp-lobby-active" class="mp-section hidden">
+              <div class="mp-room-meta">
+                <div>
+                  <span class="meta-label">ROOM CODE</span>
+                  <strong id="mp-room-code" class="room-code-display">------</strong>
+                </div>
+                <div>
+                  <span class="meta-label">YOUR FACTION</span>
+                  <strong id="mp-faction-label">ALLIES (BLUE)</strong>
+                </div>
+              </div>
+
+              <label class="meta-label" for="mp-invite-url">SHAREABLE INVITE LINK</label>
+              <div class="mp-join-row">
+                <input id="mp-invite-url" type="text" readonly />
+                <button id="btn-mp-copy" class="primary-btn copy-btn">COPY LINK</button>
+              </div>
+              <p class="mp-hint">
+                Works across two browser tabs, devices on the same Wi-Fi/LAN, or via any tunnel (Tailscale / ngrok / cloudflared).
+              </p>
+              <button id="btn-mp-leave" class="hud-btn danger-btn full-btn">LEAVE MATCH &amp; RETURN TO SOLO</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="gameover-modal" class="modal hidden">
+          <div class="modal-card gameover-card">
+            <h1 id="gameover-title">MISSION ACCOMPLISHED</h1>
+            <p id="gameover-subtitle"></p>
+            <div id="gameover-stats" class="stats-grid"></div>
+            <button id="btn-restart" class="primary-btn">DEPLOY NEW SKIRMISH</button>
+          </div>
+        </div>
+      </div>
+
+      <aside id="sidebar">
+        <div class="credits-bar">
+          <div class="credits-label">CREDITS</div>
+          <div id="credits-value">$5000</div>
+        </div>
+
+        <div class="minimap-shell">
+          <canvas id="minimap-canvas" width="208" height="208"></canvas>
+          <div class="minimap-label">RADAR // TACTICAL</div>
+        </div>
+
+        <div class="tool-bar">
+          <button id="btn-tool-repair" class="tool-btn" title="Repair Mode (R) — Click damaged building">🔧 REPAIR</button>
+          <button id="btn-tool-sell" class="tool-btn sell" title="Sell Mode (V) — Click building for refund + squad">$ SELL</button>
+        </div>
+
+        <div class="sidebar-body">
+          <div class="power-column" title="Power Produced vs Consumed">
+            <div class="power-track">
+              <div id="power-fill" class="power-fill"></div>
+              <div id="power-drain-marker" class="power-drain-marker"></div>
+            </div>
+            <div id="power-text" class="power-text">PWR</div>
+          </div>
+
+          <div class="build-column">
+            <div class="build-tabs">
+              <button class="tab-btn active" data-tab="buildings">STRUCTURES</button>
+              <button class="tab-btn" data-tab="units">UNITS</button>
+            </div>
+            <div id="build-grid" class="build-grid"></div>
+            <div id="build-tooltip" class="build-tooltip">
+              Hover a blueprint for specs. Right-click to cancel.
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div id="wave-status">ALLIED COMMAND // ACTIVE</div>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
